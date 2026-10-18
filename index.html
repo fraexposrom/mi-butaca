@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mi Butaca</title>
+<meta name="theme-color" content="#17191E">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mi Butaca">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="iconos/logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="iconos/icono-180.png">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <img src="iconos/logo.svg" alt="Mi Butaca" width="30" height="30">
+    <h1 id="tituloSeccion">Añadir</h1>
+  </div>
+  <button class="sync" id="btnSync" aria-label="Estado de sincronización y ajustes">
+    <span class="dot" id="syncDot"></span><span id="syncTxt">Solo en este móvil</span>
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Zm7.43-2.53.04-.97-.04-.97 2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.3 7.3 0 0 0-1.68-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.42l-.38 2.65c-.6.25-1.17.58-1.68.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64L4.57 11l-.04 1 .04.97-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.3.6.22l2.49-1c.51.4 1.08.73 1.68.98l.38 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.38-2.65c.6-.25 1.17-.58 1.68-.98l2.49 1c.22.08.47 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65Z"/></svg>
+  </button>
+</header>
+
+<main>
+  <!-- ============ VISTAS ============ -->
+  <section id="tab-vistas" class="tab" hidden>
+    <div class="segmento" id="segV" role="tablist">
+      <button data-s="hecho" class="on" role="tab">Vistas <b id="nVistas"></b></button>
+      <button data-s="pendiente" role="tab">Por ver <b id="nPorVer"></b></button>
+    </div>
+    <div id="vHecho">
+    <div class="stats" id="statsVistas"></div>
+    <input class="buscar" id="buscarVistas" type="search" placeholder="Buscar título, género, plataforma…" autocomplete="off">
+    <div class="chips filtros" id="filtroVistas" role="tablist">
+      <button class="chip on" data-f="todo">Todo</button>
+      <button class="chip" data-f="pelicula">Películas</button>
+      <button class="chip" data-f="serie">Series</button>
+      <button class="chip" data-f="anime">Anime</button>
+      <button class="chip" data-f="rec">👍 Recomendadas</button>
+    </div>
+    <div class="chips filtros anios" id="anioVistas"></div>
+    <div id="listaVistas"></div>
+    </div>
+    <div id="vPend" hidden>
+      <button class="elegir" id="elegirV" type="button"><span>🎲</span> No sé qué ver: elige por mí</button>
+      <input class="buscar" id="buscarPorVer" type="search" placeholder="Buscar en Por ver…" autocomplete="off">
+      <div class="chips filtros" id="filtroPorVer">
+        <button class="chip on" data-f="todo">Todo</button>
+        <button class="chip" data-f="pelicula">Películas</button>
+        <button class="chip" data-f="serie">Series</button>
+        <button class="chip" data-f="anime">Anime</button>
+        <button class="chip" data-f="ganas">⭐ Con ganas</button>
+      </div>
+      <ul class="lista" id="listaPorVer"></ul>
+    </div>
+  </section>
+
+  <!-- ============ AÑADIR ============ -->
+  <section id="tab-anadir" class="tab">
+    <div class="segmento" id="modoSel" role="radiogroup" aria-label="¿Lo has terminado?">
+      <button data-m="hecho" class="on" role="radio" aria-checked="true">Ya lo he terminado</button>
+      <button data-m="pendiente" role="radio" aria-checked="false">Lo tengo pendiente</button>
+    </div>
+    <div class="tipo" id="tipoSel" role="radiogroup" aria-label="Qué has terminado">
+      <button data-t="pelicula" class="on" role="radio" aria-checked="true"><span>🎬</span>Película</button>
+      <button data-t="serie" role="radio" aria-checked="false"><span>📺</span>Serie</button>
+      <button data-t="anime" role="radio" aria-checked="false"><span>🍥</span>Anime</button>
+      <button data-t="libro" role="radio" aria-checked="false"><span>📖</span>Libro</button>
+    </div>
+
+    <form id="form" autocomplete="off" novalidate>
+      <div class="editando" id="avisoEdicion" hidden><span id="editPre">Editando</span> <b id="editTitulo"></b></div>
+
+      <label class="f" data-para="pelicula serie anime"><span>Título</span>
+        <input name="titulo" required placeholder="Ej. Dune: Parte dos"></label>
+      <label class="f" data-para="libro"><span>Libro</span>
+        <input name="libro" required placeholder="Ej. La sombra del viento"></label>
+      <label class="f" data-para="libro"><span>Autor</span>
+        <input name="autor" list="dlAutores" placeholder="Ej. Carlos Ruiz Zafón"></label>
+
+      <div class="f" data-solo="hecho">
+        <span id="anioEtq">Año en que la viste</span>
+        <div class="paso">
+          <button type="button" id="anioMenos" aria-label="Año anterior">−</button>
+          <input name="anio" type="number" inputmode="numeric" min="1900" max="2100" aria-labelledby="anioEtq">
+          <button type="button" id="anioMas" aria-label="Año siguiente">+</button>
+        </div>
+      </div>
+
+      <div class="fila" data-para="serie anime">
+        <label class="f"><span>Temporada</span><input name="temporada" type="number" inputmode="numeric" min="0" placeholder="1"></label>
+        <label class="f" data-solo="hecho"><span>Nº capítulos</span><input name="capitulos" type="number" inputmode="numeric" min="0" placeholder="10"></label>
+      </div>
+      <label class="f" data-para="serie anime" data-solo="hecho"><span>Duración por capítulo <small>(min)</small></span>
+        <input name="duracionCap" type="number" inputmode="numeric" min="0" placeholder="45"></label>
+      <label class="f" data-para="pelicula" data-solo="hecho"><span>Duración <small>(min)</small></span>
+        <input name="duracion" type="number" inputmode="numeric" min="0" placeholder="120"></label>
+
+      <label class="f" data-para="pelicula serie anime"><span>Género</span>
+        <input name="genero" list="dlGeneros" placeholder="Elige o escribe"></label>
+
+      <fieldset class="f" data-para="pelicula serie anime"><legend id="dondeEtq">¿Dónde la has visto?</legend>
+        <div class="chips" id="plataformas"></div>
+        <input name="plataformaOtro" id="plataformaOtro" placeholder="Escribe dónde" hidden>
+      </fieldset>
+
+      <fieldset class="f" data-para="libro" data-solo="hecho"><legend>¿Cómo lo has leído?</legend>
+        <div class="chips" id="formatos">
+          <button type="button" class="chip on" data-v="Kindle">Kindle</button>
+          <button type="button" class="chip" data-v="Libro">Libro</button>
+        </div>
+      </fieldset>
+      <label class="f" data-para="libro" data-solo="hecho"><span>Precio <small>(opcional)</small></span>
+        <div class="precio"><input name="precio" type="text" inputmode="decimal" placeholder="Ej. 19,90" autocomplete="off"><b>€</b></div></label>
+      <div class="fila" data-para="libro" data-solo="hecho">
+        <label class="f"><span>Nº de páginas</span><input name="paginas" type="number" inputmode="numeric" min="0" placeholder="350"></label>
+        <label class="f"><span>Lo acabé el</span><input name="fechaFin" type="date"></label>
+      </div>
+
+      <label class="check" data-para="pelicula serie anime" data-solo="hecho">
+        <input type="checkbox" name="recomienda">
+        <span class="caja" aria-hidden="true"></span>
+        <span>La recomendaría</span>
+      </label>
+
+      <label class="f" data-solo="pendiente"><span>Nota <small>(opcional)</small></span>
+        <input name="nota" placeholder="Ej. Me la recomendó Laura"></label>
+      <label class="check" data-solo="pendiente">
+        <input type="checkbox" name="ganas">
+        <span class="caja" aria-hidden="true"></span>
+        <span>⭐ Tengo muchas ganas</span>
+      </label>
+
+      <button class="principal" id="btnGuardar" type="submit">Guardar</button>
+      <button type="button" class="convertir" id="btnConvertir" hidden>✓ Ya lo he visto</button>
+      <div class="acciones-edicion" id="accionesEdicion" hidden>
+        <button type="button" class="sec" id="btnCancelar">Cancelar</button>
+        <button type="button" class="peligro" id="btnBorrar">Borrar</button>
+      </div>
+      <p class="ultimo" id="ultimo"></p>
+    </form>
+  </section>
+
+  <!-- ============ LEÍDOS ============ -->
+  <section id="tab-leidos" class="tab" hidden>
+    <div class="segmento" id="segL" role="tablist">
+      <button data-s="hecho" class="on" role="tab">Leídos <b id="nLeidos"></b></button>
+      <button data-s="pendiente" role="tab">Por leer <b id="nPorLeer"></b></button>
+    </div>
+    <div id="lHecho">
+    <div class="stats" id="statsLeidos"></div>
+    <input class="buscar" id="buscarLeidos" type="search" placeholder="Buscar libro o autor…" autocomplete="off">
+    <div class="chips filtros anios" id="anioLeidos"></div>
+    <div id="listaLeidos"></div>
+    </div>
+    <div id="lPend" hidden>
+      <button class="elegir" id="elegirL" type="button"><span>🎲</span> No sé qué leer: elige por mí</button>
+      <input class="buscar" id="buscarPorLeer" type="search" placeholder="Buscar libro o autor…" autocomplete="off">
+      <div class="chips filtros" id="filtroPorLeer">
+        <button class="chip on" data-f="todo">Todos</button>
+        <button class="chip" data-f="ganas">⭐ Con ganas</button>
+      </div>
+      <ul class="lista" id="listaPorLeer"></ul>
+    </div>
+  </section>
+</main>
+
+<nav class="barra" aria-label="Secciones">
+  <button data-tab="vistas"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 21h8M10 9.5v4l3.5-2z" stroke="currentColor" stroke-width="2" fill="currentColor" stroke-linejoin="round" stroke-linecap="round"/></svg>Vistas</button>
+  <button data-tab="anadir" class="centro on" aria-label="Añadir"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></span>Añadir</button>
+  <button data-tab="leidos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5C6 4 9 4 12 6c3-2 6-2 9-.5V19c-3-1.5-6-1.5-9 .5-3-2-6-2-9-.5Z M12 6v13.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Leídos</button>
+</nav>
+
+<!-- ============ AJUSTES ============ -->
+<dialog id="ajustes">
+  <form method="dialog" id="formAjustes">
+    <h2>Conectar con GitHub</h2>
+    <p class="nota">Tus datos se guardan en el archivo <code>historial.json</code> de tu repositorio <b>privado</b>.</p>
+    <label class="f"><span>Usuario de GitHub</span><input name="owner" autocapitalize="off" spellcheck="false" placeholder="tu-usuario"></label>
+    <label class="f"><span>Repositorio de datos</span><input name="repo" autocapitalize="off" spellcheck="false" value="mi-butaca-datos"></label>
+    <label class="f"><span>Token</span><input name="token" type="password" autocapitalize="off" spellcheck="false" placeholder="github_pat_…"></label>
+    <label class="f"><span>Tu nombre</span><input name="nombre" placeholder="Fran"></label>
+    <p class="estado" id="estadoConexion"></p>
+    <div class="botones">
+      <button type="button" class="principal" id="btnConectar">Conectar</button>
+      <button type="button" class="sec" id="btnDesconectar">Desconectar</button>
+    </div>
+    <hr>
+    <div class="botones">
+      <button type="button" class="sec" id="btnExportar">Descargar copia</button>
+      <button type="button" class="sec" id="btnCerrar">Cerrar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="sorteo">
+  <div class="sorteo">
+    <p class="sorteo-pre" id="sorteoPre">¿Qué tal…</p>
+    <div class="sorteo-carta" id="sorteoCarta"></div>
+    <div class="botones">
+      <button type="button" class="sec" id="sorteoOtra">🎲 Otra</button>
+      <button type="button" class="principal" id="sorteoVale">¡Esta!</button>
+    </div>
+    <button type="button" class="enlace" id="sorteoCerrar">Cerrar</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<datalist id="dlGeneros"></datalist>
+<datalist id="dlAutores"></datalist>
+
+<script src="app.js"></script>
+</body>
+</html>
