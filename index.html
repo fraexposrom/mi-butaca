@@ -21,10 +21,15 @@
     <img src="iconos/logo.svg" alt="Mi Butaca" width="30" height="30">
     <h1 id="tituloSeccion">Añadir</h1>
   </div>
+  <div class="top-der">
+  <button class="icono" id="btnResumen" aria-label="Tu año: resumen anual" title="Tu año">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-6" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
+  </button>
   <button class="sync" id="btnSync" aria-label="Estado de sincronización y ajustes">
     <span class="dot" id="syncDot"></span><span id="syncTxt">Solo en este móvil</span>
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Zm7.43-2.53.04-.97-.04-.97 2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.3 7.3 0 0 0-1.68-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.42l-.38 2.65c-.6.25-1.17.58-1.68.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64L4.57 11l-.04 1 .04.97-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.3.6.22l2.49-1c.51.4 1.08.73 1.68.98l.38 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.38-2.65c.6-.25 1.17-.58 1.68-.98l2.49 1c.22.08.47 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65Z"/></svg>
   </button>
+  </div>
 </header>
 
 <main>
@@ -197,6 +202,18 @@
       <button type="button" class="sec" id="btnCerrar">Cerrar</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="resumen" class="pantalla" aria-labelledby="resTitulo">
+  <div class="res-cab">
+    <h2 id="resTitulo">Tu año</h2>
+    <button type="button" class="icono" id="resCerrar" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="res-scroll">
+    <div class="chips filtros anios" id="resAnios"></div>
+    <div id="resCuerpo"></div>
+  </div>
+  <div class="res-pie"><button type="button" class="principal" id="resImagen">Guardar como imagen</button></div>
 </dialog>
 
 <dialog id="sorteo">

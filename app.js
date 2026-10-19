@@ -272,11 +272,12 @@ form.addEventListener('submit', e => {
     if (tipo === 'pelicula') item.duracion = num(form.duracion.value);
     else Object.assign(item, { temporada: num(form.temporada.value), capitulos: num(form.capitulos.value), duracionCap: num(form.duracionCap.value) });
   }
+  if (modo === 'hecho' && (previo?.dePendiente || (previo && esPend(previo)))) item.dePendiente = true;
   if (previo) items[items.indexOf(previo)] = item; else items.push(item);
   // Si acabas algo que tenías pendiente, sale de la lista de pendientes
   if (!previo && modo === 'hecho') {
     const p = pendientes().find(i => (i.tipo === 'libro') === (tipo === 'libro') && normal(i.titulo) === normal(titulo));
-    if (p) { p.borrado = true; p.actualizado = ahora(); quitado = p; }
+    if (p) { p.borrado = true; p.actualizado = ahora(); quitado = p; item.dePendiente = true; }
   }
   sucio = true; guardarLocal();
   const eraEdicion = !!editandoId, eraConversion = previo && esPend(previo) && modo === 'hecho';
@@ -523,12 +524,186 @@ $('#sorteoOtra').addEventListener('click', tirar);
 $('#sorteoVale').addEventListener('click', () => { $('#sorteo').close(); avisar(sorteoLibro ? '¡Buena lectura! 📖' : '¡A disfrutarla! 🍿'); });
 $('#sorteoCerrar').addEventListener('click', () => $('#sorteo').close());
 
+/* ---------------- tu año ---------------- */
+let anioRes = null;
+/** Cuenta valores y devuelve [[valor, n], …] de más a menos. */
+function ranking(lista, f) {
+  const m = new Map();
+  for (const i of lista) { const v = f(i); if (v) m.set(v, (m.get(v) || 0) + 1); }
+  return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'es'));
+}
+const mayor = (l, f) => l.reduce((m, i) => (f(i) > (m ? f(m) : 0) ? i : m), null);
+function datosAnio(Y) {
+  const T = terminados().filter(i => anioDe(i) === Y);
+  const pant = T.filter(i => i.tipo !== 'libro'), libros = T.filter(i => i.tipo === 'libro');
+  const min = pant.reduce((s, i) => s + minutos(i), 0), pags = libros.reduce((s, i) => s + (i.paginas || 0), 0);
+  const conPags = libros.filter(i => i.paginas), conPrecio = libros.filter(i => i.precio != null);
+  const autores = ranking(libros, i => i.autor);
+  return {
+    Y, total: T.length, pant, libros, min, pags,
+    pelis: pant.filter(i => i.tipo === 'pelicula'), series: pant.filter(i => i.tipo === 'serie'), animes: pant.filter(i => i.tipo === 'anime'),
+    caps: pant.reduce((s, i) => s + (i.tipo !== 'pelicula' ? i.capitulos || 0 : 0), 0),
+    generos: ranking(pant, i => i.genero), plataformas: ranking(pant, donde),
+    masLarga: mayor(pant.filter(i => i.tipo !== 'pelicula'), minutos), peliLarga: mayor(pant.filter(i => i.tipo === 'pelicula'), i => i.duracion || 0),
+    rec: pant.filter(i => i.recomienda),
+    media: conPags.length ? Math.round(pags / conPags.length) : 0, gordo: mayor(libros, i => i.paginas || 0),
+    autor: autores[0] && autores[0][1] >= 2 ? autores[0] : null, nAutores: autores.length,
+    kindle: libros.filter(i => i.formato === 'Kindle').length, papel: libros.filter(i => i.formato === 'Libro').length,
+    gasto: conPrecio.reduce((s, i) => s + i.precio, 0), nPrecio: conPrecio.length,
+    tachados: T.filter(i => i.dePendiente).length,
+  };
+}
+function aniosConDatos() { return [...new Set(terminados().map(anioDe))].sort((a, b) => b - a); }
+function abrirResumen() {
+  const anios = aniosConDatos();
+  if (!anios.includes(anioRes)) anioRes = anios.includes(ANIO_ACTUAL) ? ANIO_ACTUAL : anios[0] ?? ANIO_ACTUAL;
+  pintarResumen(); $('#resumen').showModal(); $('.res-scroll').scrollTop = 0;
+}
+$('#btnResumen').addEventListener('click', abrirResumen);
+$('#resCerrar').addEventListener('click', () => $('#resumen').close());
+$('#resAnios').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { anioRes = Number(b.dataset.a); pintarResumen(); $('.res-scroll').scrollTop = 0; } });
+
+function delta(ahora_, antes, unidad) {
+  if (antes == null) return '';
+  const d = ahora_ - antes;
+  return `<em>${d === 0 ? `Igual que en ${anioRes - 1}` : `${d > 0 ? '▲' : '▼'} ${Math.abs(d).toLocaleString('es-ES')}${unidad} ${d > 0 ? 'más' : 'menos'} que en ${anioRes - 1}`}</em>`;
+}
+function barras(lista, n = 5) {
+  const top = lista.slice(0, n), max = top.length ? top[0][1] : 1;
+  return `<ul class="barras">${top.map(([v, c]) => `<li><span>${esc(v)}</span><b>${c}</b><div class="pista"><i style="width:${Math.max(4, Math.round(100 * c / max))}%"></i></div></li>`).join('')}</ul>`;
+}
+const dato = (k, v) => `<div class="res-dato"><span>${k}</span><b>${v}</b></div>`;
+
+function pintarResumen() {
+  const anios = aniosConDatos();
+  $('#resAnios').hidden = anios.length < 2;
+  $('#resAnios').innerHTML = anios.map(a => `<button class="chip${a === anioRes ? ' on' : ''}" data-a="${a}">${a}</button>`).join('');
+  const d = datosAnio(anioRes), prev = anios.includes(anioRes - 1) ? datosAnio(anioRes - 1) : null;
+  $('#resTitulo').textContent = `Tu ${anioRes}`;
+  $('#resImagen').disabled = !d.total;
+  if (!d.total) {
+    $('#resCuerpo').innerHTML = `<div class="res-vacio"><b>Aún no hay nada en ${anioRes}</b>Cuando termines películas, series o libros, aquí verás tu resumen del año.</div>`;
+    return;
+  }
+  let h = `<section class="res-t res-hero"><h3>Tu ${anioRes} en Mi Butaca<small>${anioRes === ANIO_ACTUAL ? 'En lo que va de año' : 'El año completo'}</small></h3>
+    <div class="res-nums">
+      <div class="res-num"><b>${d.pant.length}</b><span>títulos vistos</span>${delta(d.pant.length, prev?.pant.length, '')}</div>
+      <div class="res-num"><b>${horas(d.min)}</b><span>delante de la pantalla</span>${prev ? delta(Math.round(d.min / 60), Math.round(prev.min / 60), ' h') : ''}</div>
+      <div class="res-num"><b>${d.libros.length}</b><span>${d.libros.length === 1 ? 'libro leído' : 'libros leídos'}</span>${delta(d.libros.length, prev?.libros.length, '')}</div>
+      <div class="res-num"><b>${d.pags.toLocaleString('es-ES')}</b><span>páginas</span>${delta(d.pags, prev?.pags, '')}</div>
+    </div></section>`;
+
+  if (d.pant.length) {
+    h += `<section class="res-t"><h3>En pantalla</h3>
+      <div class="res-tipos">
+        <div><b>${d.pelis.length}</b><span><i style="background:var(--peli)"></i>Películas</span></div>
+        <div><b>${d.series.length}</b><span><i style="background:var(--serie)"></i>Series</span></div>
+        <div><b>${d.animes.length}</b><span><i style="background:var(--anime)"></i>Anime</span></div>
+      </div>
+      ${d.caps ? dato('Capítulos vistos', d.caps.toLocaleString('es-ES')) : ''}
+      ${d.masLarga && minutos(d.masLarga) ? dato('La serie más larga', `${esc(d.masLarga.titulo)} · ${horas(minutos(d.masLarga))}`) : ''}
+      ${d.peliLarga?.duracion ? dato('La película más larga', `${esc(d.peliLarga.titulo)} · ${d.peliLarga.duracion} min`) : ''}
+      ${dato('Recomendarías', `${d.rec.length} de ${d.pant.length}`)}
+      ${d.generos.length ? `<p class="res-sub">Tus géneros</p>${barras(d.generos)}` : ''}
+      ${d.plataformas.length ? `<p class="res-sub">Dónde has visto más</p>${barras(d.plataformas)}` : ''}
+      ${d.rec.length ? `<p class="res-sub">Lo que recomiendas</p><div class="res-chips">${d.rec.slice(0, 8).map(i => `<span>👍 ${esc(i.titulo)}</span>`).join('')}${d.rec.length > 8 ? `<span>y ${d.rec.length - 8} más</span>` : ''}</div>` : ''}
+    </section>`;
+  }
+  if (d.libros.length) {
+    h += `<section class="res-t"><h3>Libros</h3>
+      ${d.media ? dato('Media por libro', `${d.media.toLocaleString('es-ES')} págs.`) : ''}
+      ${d.gordo?.paginas ? dato('El más largo', `${esc(d.gordo.titulo)} · ${d.gordo.paginas.toLocaleString('es-ES')} págs.`) : ''}
+      ${d.autor ? dato('Autor del año', `${esc(d.autor[0])} · ${d.autor[1]} libros`) : d.nAutores > 1 ? dato('Autores distintos', d.nAutores) : ''}
+      ${dato('Kindle / papel', `${d.kindle} / ${d.papel}`)}
+      ${d.nPrecio ? dato('Gastado en libros', `${euros(Math.round(d.gasto * 100) / 100)}${d.nPrecio < d.libros.length ? ` <small>(${d.nPrecio} con precio)</small>` : ''}`) : ''}
+    </section>`;
+  }
+  const pv = pendientes().filter(i => i.tipo !== 'libro').length, pl = pendientes().filter(i => i.tipo === 'libro').length;
+  if (d.tachados || (anioRes === ANIO_ACTUAL && (pv || pl))) {
+    h += `<section class="res-t"><h3>Pendientes</h3>
+      ${d.tachados ? dato('Tachados de tu lista', d.tachados) : ''}
+      ${anioRes === ANIO_ACTUAL && pv ? dato('Te quedan por ver', pv) : ''}
+      ${anioRes === ANIO_ACTUAL && pl ? dato('Te quedan por leer', pl) : ''}
+    </section>`;
+  }
+  $('#resCuerpo').innerHTML = h;
+}
+
+/* Imagen para compartir (1080×1920, formato historia) */
+function cargarImg(src) { return new Promise(r => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(null); im.src = src; }); }
+function ajustar(ctx, txt, ancho) {
+  if (ctx.measureText(txt).width <= ancho) return txt;
+  while (txt.length > 1 && ctx.measureText(txt + '…').width > ancho) txt = txt.slice(0, -1);
+  return txt + '…';
+}
+async function imagenResumen() {
+  const d = datosAnio(anioRes), W = 1080, H = 1920, P = 90;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const c = cv.getContext('2d'), F = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const BG = css('--bg'), CARD = css('--card'), INK = css('--ink'), INK2 = css('--ink2'), ACC = css('--acc'), CHIP = css('--chip');
+  const caja = (x, y, w, h, r, col) => { c.fillStyle = col; c.beginPath(); c.roundRect(x, y, w, h, r); c.fill(); };
+  c.fillStyle = BG; c.fillRect(0, 0, W, H);
+  const logo = await cargarImg('iconos/logo.svg');
+  if (logo) { c.save(); c.beginPath(); c.roundRect(P, 110, 120, 120, 28); c.clip(); c.drawImage(logo, P, 110, 120, 120); c.restore(); }
+  c.fillStyle = INK2; c.font = `600 40px ${F}`; c.fillText('Mi Butaca', P + 150, 160);
+  c.fillStyle = INK2; c.font = `500 34px ${F}`; c.fillText(anioRes === ANIO_ACTUAL ? 'En lo que va de año' : 'Resumen del año', P + 150, 210);
+  c.fillStyle = INK; c.font = `800 190px ${F}`; c.fillText(`Mi ${anioRes}`, P - 8, 450);
+  const nums = [[d.pant.length, 'títulos vistos'], [horas(d.min), 'de pantalla'], [d.libros.length, d.libros.length === 1 ? 'libro leído' : 'libros leídos'], [d.pags.toLocaleString('es-ES'), 'páginas']];
+  const bw = (W - 2 * P - 30) / 2;
+  nums.forEach(([v, k], n) => {
+    const x = P + (n % 2) * (bw + 30), y = 530 + Math.floor(n / 2) * 250;
+    caja(x, y, bw, 220, 36, CARD);
+    c.fillStyle = INK; c.font = `800 92px ${F}`; c.fillText(ajustar(c, String(v), bw - 70), x + 40, y + 120);
+    c.fillStyle = INK2; c.font = `500 36px ${F}`; c.fillText(k, x + 40, y + 178);
+  });
+  let y = 1090;
+  const LIMITE = H - 170; // por encima del pie
+  const lista = (titulo, filas, maxFilas) => {
+    const n_ = Math.min(maxFilas, filas.length, Math.floor((LIMITE - y - 40) / 100));
+    if (n_ < 1) return;
+    c.fillStyle = INK2; c.font = `700 30px ${F}`; c.fillText(titulo.toUpperCase(), P, y); y += 30;
+    const max = filas[0][1];
+    for (const [v, n] of filas.slice(0, n_)) {
+      c.fillStyle = INK; c.font = `600 40px ${F}`; c.fillText(ajustar(c, v, W - 2 * P - 120), P, y + 50);
+      c.fillStyle = INK2; c.textAlign = 'right'; c.fillText(String(n), W - P, y + 50); c.textAlign = 'left';
+      caja(P, y + 70, W - 2 * P, 14, 7, CHIP); caja(P, y + 70, Math.max(30, (W - 2 * P) * n / max), 14, 7, ACC);
+      y += 100;
+    }
+    y += 50;
+  };
+  const extra = [d.autor ? `Autor del año: ${d.autor[0]}` : '', d.masLarga && minutos(d.masLarga) ? `Serie más larga: ${d.masLarga.titulo}` : '',
+    d.gordo?.paginas ? `Libro más largo: ${d.gordo.titulo}` : '', d.rec.length ? `Recomendarías ${d.rec.length} de ${d.pant.length}` : ''].filter(Boolean);
+  lista('Tus géneros', d.generos, 3);
+  lista('Dónde has visto más', d.plataformas, extra.length ? 2 : 3);
+  c.font = `500 38px ${F}`;
+  for (const t of extra) { if (y > LIMITE) break; c.fillStyle = INK; c.fillText(ajustar(c, '· ' + t, W - 2 * P), P, y); y += 64; }
+  c.fillStyle = INK2; c.font = `500 30px ${F}`; c.textAlign = 'center'; c.fillText('Hecho con Mi Butaca', W / 2, H - 80); c.textAlign = 'left';
+  return new Promise(r => cv.toBlob(r, 'image/png'));
+}
+$('#resImagen').addEventListener('click', async () => {
+  const b = $('#resImagen'); b.disabled = true; const t = b.textContent; b.textContent = 'Preparando…';
+  try {
+    const blob = await imagenResumen(), nombre = `mi-butaca-${anioRes}.png`;
+    const file = new File([blob], nombre, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: `Mi ${anioRes} en Mi Butaca` }); } catch (e) { if (e.name !== 'AbortError') throw e; }
+    } else {
+      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: nombre });
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+      avisar('Imagen guardada en Descargas');
+    }
+  } catch { avisar('No se pudo crear la imagen'); }
+  b.textContent = t; b.disabled = false;
+});
+
 function vacio(hayAlgo, titulo, texto) {
   return hayAlgo ? '<li class="vacio"><b>Nada coincide</b>Prueba con otra búsqueda o filtro.</li>'
     : `<li class="vacio"><b>${titulo}</b>${texto}</li>`;
 }
 function pintarTodo() {
   pintarVistas(); pintarLeidos(); pintarPorVer(); pintarPorLeer(); pintarSegmentos();
+  if ($('#resumen').open) pintarResumen();
   const n = (l, libro) => l.filter(i => (i.tipo === 'libro') === libro).length || '';
   $('#nVistas').textContent = n(terminados(), false); $('#nPorVer').textContent = n(pendientes(), false);
   $('#nLeidos').textContent = n(terminados(), true); $('#nPorLeer').textContent = n(pendientes(), true);
