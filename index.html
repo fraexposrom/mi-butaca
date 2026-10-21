@@ -41,7 +41,6 @@
     </div>
     <div id="vHecho">
     <div class="stats" id="statsVistas"></div>
-    <div class="recalc-fila"><button type="button" class="recalc" data-recalc>↻ Recalcular</button></div>
     <input class="buscar" id="buscarVistas" type="search" placeholder="Buscar título, género, plataforma…" autocomplete="off">
     <div class="chips filtros" id="filtroVistas" role="tablist">
       <button class="chip on" data-f="todo">Todo</button>
@@ -161,7 +160,6 @@
     </div>
     <div id="lHecho">
     <div class="stats" id="statsLeidos"></div>
-    <div class="recalc-fila"><button type="button" class="recalc" data-recalc>↻ Recalcular</button></div>
     <input class="buscar" id="buscarLeidos" type="search" placeholder="Buscar libro o autor…" autocomplete="off">
     <div class="chips filtros anios" id="anioLeidos"></div>
     <div id="listaLeidos"></div>
@@ -209,8 +207,7 @@
 <dialog id="resumen" class="pantalla" aria-labelledby="resTitulo">
   <div class="res-cab">
     <h2 id="resTitulo">Tu año</h2>
-    <div class="res-acc"><button type="button" class="icono" data-recalc aria-label="Recalcular">↻</button>
-    <button type="button" class="icono" id="resCerrar" aria-label="Cerrar">✕</button></div>
+    <button type="button" class="icono" id="resCerrar" aria-label="Cerrar">✕</button>
   </div>
   <div class="res-scroll">
     <div class="chips filtros anios" id="resAnios"></div>

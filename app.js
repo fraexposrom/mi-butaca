@@ -86,20 +86,10 @@ async function bajar(c = cfg) {
   let datos;
   try { datos = JSON.parse(texto || '{}'); } catch { throw new Error(`${ARCHIVO} no es un JSON válido. Revísalo en GitHub.`); }
   const lista = Array.isArray(datos) ? datos : (datos.items || []);
-  lista.forEach(i => { if (!i.id) i.id = nuevoId(); if (!i.actualizado) i.actualizado = i.creado || '1970-01-01T00:00:00Z'; normalizar(i); });
+  lista.forEach(i => { if (!i.id) i.id = nuevoId(); if (!i.actualizado) i.actualizado = i.creado || '1970-01-01T00:00:00Z'; });
   return { items: lista, sha: j.sha };
 }
 /** Une dos listas: por cada id gana la versión con «actualizado» más reciente. */
-/** Deja los campos numéricos como números (por si se editaron a mano en GitHub como texto, p. ej. "19,90"). */
-function normalizar(i) {
-  for (const k of ['anio', 'paginas', 'duracion', 'capitulos', 'duracionCap', 'temporada']) {
-    if (i[k] == null) continue;
-    const n = typeof i[k] === 'number' ? i[k] : Number(String(i[k]).replace(',', '.').trim() || NaN);
-    i[k] = Number.isFinite(n) ? n : null;
-  }
-  if (i.precio != null && typeof i.precio !== 'number') { const n = leerPrecio(i.precio); i.precio = Number.isNaN(n) ? null : n; }
-  return i;
-}
 function unir(a, b) {
   const m = new Map(); for (const i of a) m.set(i.id, i);
   for (const i of b) { const x = m.get(i.id); if (!x || ms(i.actualizado) > ms(x.actualizado)) m.set(i.id, i); }
@@ -771,19 +761,4 @@ addEventListener('offline', () => pintarEstado());
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
-/* «↻ Recalcular»: trae lo último de GitHub, sube lo pendiente y recalcula todos los totales. */
-async function recalcular() {
-  const botones = $$('[data-recalc]');
-  botones.forEach(b => { b.disabled = true; if (b.classList.contains('icono')) b.classList.add('girando'); else b.textContent = '↻ Recalculando…'; });
-  items.forEach(normalizar); guardarLocal();
-  const enLinea = cfg && navigator.onLine;
-  if (enLinea) await sincronizar();
-  pintarTodo();
-  botones.forEach(b => { b.disabled = false; b.classList.remove('girando'); if (!b.classList.contains('icono')) b.textContent = '↻ Recalcular'; });
-  avisar(!cfg ? 'Totales recalculados' : !navigator.onLine ? 'Sin conexión: recalculado con los datos del móvil'
-    : ultimoError ? 'No se pudo sincronizar: recalculado con los datos del móvil' : 'Datos al día y totales recalculados');
-}
-$$('[data-recalc]').forEach(b => b.addEventListener('click', recalcular));
-
-items.forEach(normalizar);
 ponerTipo('pelicula'); ponerModo('hecho'); limpiarForm(); pintarTodo(); sincronizar();

@@ -220,10 +220,4 @@ dialog.pantalla[open]{display:flex;flex-direction:column}
 .res-chips span{background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:13px}
 .res-vacio{text-align:center;color:var(--ink2);padding:48px 16px}
 .res-vacio b{display:block;color:var(--ink);font-size:17px;margin-bottom:4px}
-.recalc-fila{display:flex;justify-content:flex-end;margin:-4px 0 8px}
-.recalc{border:0;background:none;color:var(--ink2);font-size:13px;font-weight:600;padding:4px 2px}
-.recalc:disabled,[data-recalc]:disabled{opacity:.5}
-.res-acc{display:flex;gap:8px}
-[data-recalc].girando{animation:giro .8s linear infinite}
-@keyframes giro{to{transform:rotate(360deg)}}
 .enlace{border:0;background:none;color:var(--ink2);font-size:14px;padding:4px;text-decoration:underline}
