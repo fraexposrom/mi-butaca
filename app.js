@@ -37,6 +37,10 @@ const esPend = i => i.estado === 'pendiente';
 const terminados = () => visibles().filter(i => !esPend(i));
 const pendientes = () => visibles().filter(esPend);
 const ahora = () => new Date().toISOString();
+/** Sello de modificación: siempre posterior al anterior, aunque el reloj de otro móvil vaya adelantado. */
+/** Fecha ISO → milisegundos (comparar como texto falla con «…00Z» frente a «…00.001Z»). */
+const ms = iso => Date.parse(iso || '') || 0;
+const sello = prev => { const n = Date.now(), p = ms(prev?.actualizado); return new Date(p >= n ? p + 1 : n).toISOString(); };
 const hoyISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 const ANIO_ACTUAL = new Date().getFullYear();
 /** Año en que se vio o leyó; los registros antiguos sin «anio» lo toman de sus fechas. */
@@ -82,13 +86,23 @@ async function bajar(c = cfg) {
   let datos;
   try { datos = JSON.parse(texto || '{}'); } catch { throw new Error(`${ARCHIVO} no es un JSON válido. Revísalo en GitHub.`); }
   const lista = Array.isArray(datos) ? datos : (datos.items || []);
-  lista.forEach(i => { if (!i.id) i.id = nuevoId(); if (!i.actualizado) i.actualizado = i.creado || '1970-01-01T00:00:00Z'; });
+  lista.forEach(i => { if (!i.id) i.id = nuevoId(); if (!i.actualizado) i.actualizado = i.creado || '1970-01-01T00:00:00Z'; normalizar(i); });
   return { items: lista, sha: j.sha };
 }
 /** Une dos listas: por cada id gana la versión con «actualizado» más reciente. */
+/** Deja los campos numéricos como números (por si se editaron a mano en GitHub como texto, p. ej. "19,90"). */
+function normalizar(i) {
+  for (const k of ['anio', 'paginas', 'duracion', 'capitulos', 'duracionCap', 'temporada']) {
+    if (i[k] == null) continue;
+    const n = typeof i[k] === 'number' ? i[k] : Number(String(i[k]).replace(',', '.').trim() || NaN);
+    i[k] = Number.isFinite(n) ? n : null;
+  }
+  if (i.precio != null && typeof i.precio !== 'number') { const n = leerPrecio(i.precio); i.precio = Number.isNaN(n) ? null : n; }
+  return i;
+}
 function unir(a, b) {
   const m = new Map(); for (const i of a) m.set(i.id, i);
-  for (const i of b) { const x = m.get(i.id); if (!x || (i.actualizado || '') > (x.actualizado || '')) m.set(i.id, i); }
+  for (const i of b) { const x = m.get(i.id); if (!x || ms(i.actualizado) > ms(x.actualizado)) m.set(i.id, i); }
   return [...m.values()];
 }
 
@@ -253,7 +267,7 @@ form.addEventListener('submit', e => {
   if (Number.isNaN(precio)) { form.precio.classList.add('mal'); form.precio.focus(); avisar('Revisa el precio (ej. 19,90)'); return; }
   const previo = editandoId ? items.find(i => i.id === editandoId) : null;
   const base = { id: previo ? previo.id : nuevoId(), tipo, titulo, anio, creado: previo ? previo.creado : ahora(),
-    actualizado: ahora(), por: cfg?.nombre || previo?.por || '' };
+    actualizado: sello(previo), por: cfg?.nombre || previo?.por || '' };
   let item, quitado = null;
   if (modo === 'pendiente') {
     item = { ...base, estado: 'pendiente', nota: form.nota.value.trim(), ganas: form.ganas.checked };
@@ -277,7 +291,7 @@ form.addEventListener('submit', e => {
   // Si acabas algo que tenías pendiente, sale de la lista de pendientes
   if (!previo && modo === 'hecho') {
     const p = pendientes().find(i => (i.tipo === 'libro') === (tipo === 'libro') && normal(i.titulo) === normal(titulo));
-    if (p) { p.borrado = true; p.actualizado = ahora(); quitado = p; item.dePendiente = true; }
+    if (p) { p.borrado = true; p.actualizado = sello(p); quitado = p; item.dePendiente = true; }
   }
   sucio = true; guardarLocal();
   const eraEdicion = !!editandoId, eraConversion = previo && esPend(previo) && modo === 'hecho';
@@ -333,7 +347,7 @@ $('#btnCancelar').addEventListener('click', () => {
 $('#btnBorrar').addEventListener('click', () => {
   const it = items.find(i => i.id === editandoId); if (!it) return;
   if (!confirm(`¿Borrar «${it.titulo}»?`)) return;
-  it.borrado = true; it.actualizado = ahora(); sucio = true; guardarLocal();
+  it.borrado = true; it.actualizado = sello(it); sucio = true; guardarLocal();
   const t = it.tipo, m = esPend(it) ? 'pendiente' : 'hecho'; salirEdicion(); irLista(t, m); pintarTodo(); sincronizar();
   avisar('Borrado');
 });
@@ -757,4 +771,19 @@ addEventListener('offline', () => pintarEstado());
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
+/* «↻ Recalcular»: trae lo último de GitHub, sube lo pendiente y recalcula todos los totales. */
+async function recalcular() {
+  const botones = $$('[data-recalc]');
+  botones.forEach(b => { b.disabled = true; if (b.classList.contains('icono')) b.classList.add('girando'); else b.textContent = '↻ Recalculando…'; });
+  items.forEach(normalizar); guardarLocal();
+  const enLinea = cfg && navigator.onLine;
+  if (enLinea) await sincronizar();
+  pintarTodo();
+  botones.forEach(b => { b.disabled = false; b.classList.remove('girando'); if (!b.classList.contains('icono')) b.textContent = '↻ Recalcular'; });
+  avisar(!cfg ? 'Totales recalculados' : !navigator.onLine ? 'Sin conexión: recalculado con los datos del móvil'
+    : ultimoError ? 'No se pudo sincronizar: recalculado con los datos del móvil' : 'Datos al día y totales recalculados');
+}
+$$('[data-recalc]').forEach(b => b.addEventListener('click', recalcular));
+
+items.forEach(normalizar);
 ponerTipo('pelicula'); ponerModo('hecho'); limpiarForm(); pintarTodo(); sincronizar();

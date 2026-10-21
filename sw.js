@@ -1,5 +1,5 @@
 // Guarda la app en el móvil para que abra sin conexión. Los datos (api.github.com) nunca se guardan aquí.
-const CACHE = 'mibutaca-v5';
+const CACHE = 'mibutaca-v7';
 const ARCHIVOS = ['./', 'index.html', 'estilos.css', 'app.js', 'manifest.webmanifest',
   'iconos/logo.svg', 'iconos/icono-192.png', 'iconos/icono-512.png', 'iconos/icono-180.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS))); self.skipWaiting(); });
