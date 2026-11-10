@@ -63,6 +63,12 @@ async function gh(ruta, opt = {}, c = cfg) {
     headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${c.token}`,
       'X-GitHub-Api-Version': '2022-11-28', ...(opt.body ? { 'Content-Type': 'application/json' } : {}) },
   });
+  if (c === cfg && cfg) {
+    if (r.status === 401) tokenMalo = true; else if (r.ok) tokenMalo = false;
+    // GitHub indica la caducidad del token en esta cabecera (si el navegador la deja leer, se guarda sola)
+    const exp = (r.headers.get('github-authentication-token-expiration') || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(exp) && cfg.caduca !== exp) { cfg.caduca = exp; escribirLS(LS.cfg, cfg); }
+  }
   return r;
 }
 /** Devuelve {items, sha} del repositorio, o {items:[], sha:null} si el archivo aún no existe. */
@@ -86,10 +92,20 @@ async function bajar(c = cfg) {
   let datos;
   try { datos = JSON.parse(texto || '{}'); } catch { throw new Error(`${ARCHIVO} no es un JSON válido. Revísalo en GitHub.`); }
   const lista = Array.isArray(datos) ? datos : (datos.items || []);
-  lista.forEach(i => { if (!i.id) i.id = nuevoId(); if (!i.actualizado) i.actualizado = i.creado || '1970-01-01T00:00:00Z'; });
+  lista.forEach(i => { if (!i.id) i.id = nuevoId(); if (!i.actualizado) i.actualizado = i.creado || '1970-01-01T00:00:00Z'; normalizar(i); });
   return { items: lista, sha: j.sha };
 }
 /** Une dos listas: por cada id gana la versión con «actualizado» más reciente. */
+/** Deja los campos numéricos como números (por si se editaron a mano en GitHub como texto, p. ej. "19,90"). */
+function normalizar(i) {
+  for (const k of ['anio', 'paginas', 'duracion', 'capitulos', 'duracionCap', 'temporada', 'temporadaFin']) {
+    if (i[k] == null) continue;
+    const n = typeof i[k] === 'number' ? i[k] : Number(String(i[k]).replace(',', '.').trim() || NaN);
+    i[k] = Number.isFinite(n) ? n : null;
+  }
+  if (i.precio != null && typeof i.precio !== 'number') { const n = leerPrecio(i.precio); i.precio = Number.isNaN(n) ? null : n; }
+  return i;
+}
 function unir(a, b) {
   const m = new Map(); for (const i of a) m.set(i.id, i);
   for (const i of b) { const x = m.get(i.id); if (!x || ms(i.actualizado) > ms(x.actualizado)) m.set(i.id, i); }
@@ -126,15 +142,16 @@ async function sincronizarYa() {
   }
   pintarEstado();
 }
-let ultimoError = null;
+let ultimoError = null, tokenMalo = false;
 const ordenar = l => [...l].sort((a, b) => (a.creado || '').localeCompare(b.creado || '') || a.id.localeCompare(b.id));
 
 function pintarEstado(modo) {
+  pintarAvisos();
   const dot = $('#syncDot'), txt = $('#syncTxt');
   dot.className = 'dot';
   if (!cfg) { txt.textContent = 'Solo en este móvil'; dot.classList.add('pend'); return; }
   if (modo === 'girando') { dot.classList.add('pend', 'girando'); txt.textContent = 'Sincronizando…'; return; }
-  if (ultimoError) { dot.classList.add('err'); txt.textContent = 'Error al sincronizar'; return; }
+  if (ultimoError) { dot.classList.add('err'); txt.textContent = tokenMalo ? 'Token caducado' : 'Error al sincronizar'; return; }
   if (!navigator.onLine) { dot.classList.add('pend'); txt.textContent = sucio ? 'Sin conexión · pendiente' : 'Sin conexión'; return; }
   if (sucio) { dot.classList.add('pend'); txt.textContent = 'Pendiente de subir'; return; }
   dot.classList.add('ok'); txt.textContent = 'Guardado en GitHub';
@@ -196,6 +213,7 @@ function ponerTipo(t) {
   $$('#tipoSel button').forEach(b => { const on = b.dataset.t === t; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   visibilidad();
   $('#anioEtq').textContent = t === 'libro' ? 'Año en que lo leíste' : t === 'pelicula' ? 'Año en que la viste' : 'Año en que la terminaste';
+  pintarDlTitulos(); deshacerAuto();
   $('#dlGeneros').innerHTML = (t === 'anime' ? GENEROS.anime : GENEROS.general).concat(generosUsados(t))
     .filter((g, i, a) => a.indexOf(g) === i).map(g => `<option value="${esc(g)}">`).join('');
   $$('.mal', form).forEach(i => i.classList.remove('mal'));
@@ -204,8 +222,14 @@ function ponerTipo(t) {
 function visibilidad() {
   $$('[data-para],[data-solo]', form).forEach(el => {
     const p = el.dataset.para, so = el.dataset.solo;
-    el.hidden = !!((p && !p.split(' ').includes(tipo)) || (so && so !== modo));
+    el.hidden = !!((p && !p.split(' ').includes(tipo)) || (so && so !== modo) || (el.dataset.sirec && !form.recomienda.checked));
   });
+  const libro = tipo === 'libro';
+  $('#recEtq').textContent = libro ? 'Lo recomendaría' : 'La recomendaría';
+  $('#porqueEtq').innerHTML = `¿Por qué ${libro ? 'lo' : 'la'} recomiendas? <small>(opcional)</small>`;
+  $('#revEtq').innerHTML = libro ? 'Es una relectura <small>(ya lo había leído)</small>' : 'Es un revisionado <small>(ya la había visto)</small>';
+  $('#estrenoEtq').innerHTML = (libro ? 'Fecha de publicación' : tipo === 'pelicula' ? 'Fecha de estreno' : 'Fecha de estreno de la temporada') + ' <small>(opcional)</small>';
+  pintarDuplicado();
   $('#dondeEtq').innerHTML = modo === 'pendiente' ? '¿Dónde la verás? <small>(opcional)</small>' : '¿Dónde la has visto?';
   $('#btnConvertir').textContent = tipo === 'libro' ? '✓ Ya lo he leído' : '✓ Ya la he visto';
   $('#btnGuardar').textContent = editandoId ? 'Guardar cambios' : modo === 'pendiente'
@@ -216,12 +240,17 @@ function ponerModo(m) {
   $$('#modoSel button').forEach(b => { const on = b.dataset.m === m; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   visibilidad(); $$('.mal', form).forEach(i => i.classList.remove('mal'));
 }
+form.recomienda.addEventListener('change', () => { visibilidad(); if (form.recomienda.checked) form.porque.focus({ preventScroll: true }); });
+form.revisionado.addEventListener('change', pintarDuplicado);
 $('#modoSel').addEventListener('click', e => { const b = e.target.closest('button'); if (b && !editandoId) ponerModo(b.dataset.m); });
 function generosUsados(t) { return visibles().filter(i => i.tipo === t && i.genero).map(i => i.genero); }
 
 function limpiarForm() {
+  ultimoAuto = ''; autoCampos = []; autoPlat = null; $('#autoHint').hidden = true;
+  portadaSel = null; mostrarPortadaForm();
   form.reset(); plataforma = null; formato = 'Kindle'; form.fechaFin.value = hoyISO(); form.anio.value = ANIO_ACTUAL; pintarChips();
   $$('.mal', form).forEach(i => i.classList.remove('mal'));
+  visibilidad();
 }
 function cambiarAnio(n) {
   form.anio.value = n; form.anio.classList.remove('mal');
@@ -239,6 +268,351 @@ function leerPrecio(v) {
   return Math.round(Number(t) * 100) / 100;
 }
 const euros = n => n.toLocaleString('es-ES', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }) + ' €';
+/** Lee «4», «1-4», «1–4», «1 a 4»… → {ini, fin}. Vacío → nulls; inválido → null. */
+function leerTemporadas(v) {
+  const t = String(v || '').trim().toLowerCase().replace(/^t/, '');
+  if (!t) return { ini: null, fin: null };
+  let m = t.match(/^(\d{1,3})$/);
+  if (m) return { ini: Number(m[1]), fin: null };
+  m = t.match(/^(\d{1,3})\s*(?:-|–|—|a|al|y|hasta)\s*t?(\d{1,3})$/);
+  if (!m) return null;
+  const a = Number(m[1]), b = Number(m[2]);
+  if (b < a) return null;
+  return { ini: a, fin: b > a ? b : null };
+}
+const textoTemporadas = i => i.temporada == null ? '' : i.temporadaFin ? `${i.temporada}-${i.temporadaFin}` : String(i.temporada);
+const etiquetaTemp = i => i.temporada == null || i.tipo === 'pelicula' ? '' : i.temporadaFin ? `T${i.temporada}–T${i.temporadaFin}` : `T${i.temporada}`;
+/* ---- duplicados ---- */
+const campoTitulo = () => (tipo === 'libro' ? form.libro : form.titulo);
+/** ¿Se pisan las temporadas? Sin temporada en alguno de los dos, se considera que sí. */
+function solapa(i, t) {
+  if (!t || t.ini == null || i.temporada == null) return true;
+  const a1 = i.temporada, b1 = i.temporadaFin || i.temporada, a2 = t.ini, b2 = t.fin || t.ini;
+  return a1 <= b2 && a2 <= b1;
+}
+function analizarDup() {
+  const t = normal(campoTitulo().value.trim());
+  if (!t) return { choca: [], pend: [], hechos: [] };
+  const mismos = visibles().filter(i => i.id !== editandoId && i.tipo === tipo && normal(i.titulo) === t);
+  const hechos = mismos.filter(i => !esPend(i)).sort((a, b) => anioDe(b) - anioDe(a)), pend = mismos.filter(esPend);
+  const temps = tipo === 'serie' || tipo === 'anime' ? leerTemporadas(form.temporada.value) : null;
+  return { hechos, pend, choca: tipo === 'serie' || tipo === 'anime' ? hechos.filter(i => solapa(i, temps)) : hechos };
+}
+function pintarDuplicado() {
+  const box = $('#avisoDup'); if (!box) return;
+  const { choca, pend, hechos } = analizarDup(), libro = tipo === 'libro';
+  let h = '', suave = false;
+  if (modo === 'hecho') {
+    if (choca.length && !form.revisionado.checked) {
+      const u = choca[0];
+      h = `Ya tienes «${esc(u.titulo)}»${etiquetaTemp(u) ? ' ' + etiquetaTemp(u) : ''} en ${libro ? 'Leídos' : 'Vistas'} (${anioDe(u)}).
+        ${libro ? '¿Lo has vuelto a leer?' : '¿La has vuelto a ver?'}<br><button type="button" id="marcarRev">Sí, es ${libro ? 'una relectura' : 'un revisionado'}</button>`;
+    } else if (pend.length && !editandoId) {
+      h = `Lo tenías en ${libro ? 'Por leer' : 'Por ver'}: al guardarlo saldrá de esa lista.`; suave = true;
+    }
+  } else if (pend.length) {
+    h = `«${esc(pend[0].titulo)}» ya está en ${libro ? 'Por leer' : 'Por ver'}.`;
+  } else if (hechos.length) {
+    h = `Ya ${libro ? 'lo leíste' : 'la viste'} en ${anioDe(hechos[0])}. Puedes apuntarlo igualmente para repetir.`; suave = true;
+  }
+  // Solo se redibuja si cambia: si no, un toque en «Sí, es un revisionado» justo al salir del título se perdería
+  if (box.dataset.html !== h) { box.innerHTML = h; box.dataset.html = h; }
+  box.hidden = !h; box.classList.toggle('suave', suave);
+}
+$('#avisoDup').addEventListener('click', e => { if (e.target.id === 'marcarRev') { form.revisionado.checked = true; pintarDuplicado(); } });
+
+/* ---- autocompletar con lo que ya tienes ---- */
+let ultimoAuto = '', autoCampos = [], autoPlat = null;
+/** Deshace lo autocompletado (si no lo has cambiado tú) cuando cambias a otro título. */
+function deshacerAuto() {
+  for (const { el, v } of autoCampos) if (el.value === String(v)) el.value = '';
+  if (autoPlat && plataforma === autoPlat) { plataforma = null; form.plataformaOtro.value = ''; pintarChips(); }
+  autoCampos = []; autoPlat = null; ultimoAuto = ''; $('#autoHint').hidden = true;
+}
+function pintarDlTitulos() {
+  const vistos = new Set(), opts = [];
+  for (const i of visibles().filter(i => i.tipo === tipo).sort((a, b) => ms(b.actualizado) - ms(a.actualizado))) {
+    const k = normal(i.titulo); if (vistos.has(k)) continue; vistos.add(k); opts.push(`<option value="${esc(i.titulo)}">`);
+  }
+  $('#dlTitulos').innerHTML = opts.join('');
+}
+/** Al elegir un título que ya existe, rellena lo que esté vacío con sus datos (y propone la siguiente temporada). */
+function autocompletar() {
+  if (editandoId) return;
+  const campo = campoTitulo(), t = normal(campo.value.trim());
+  if (!t || t === ultimoAuto) return;
+  const previos = visibles().filter(i => i.tipo === tipo && normal(i.titulo) === t).sort((a, b) => ms(b.actualizado) - ms(a.actualizado));
+  if (!previos.length) return;
+  if (ultimoAuto) deshacerAuto();
+  ultimoAuto = t;
+  const p = previos[0], hechos = previos.filter(i => !esPend(i));
+  const rellenados = [];
+  const set = (el, v, nombre) => { if (v != null && v !== '' && !el.value) { el.value = v; autoCampos.push({ el, v }); rellenados.push(nombre); } };
+  campo.value = p.titulo;
+  if (tipo === 'libro') { set(form.autor, p.autor, 'autor'); set(form.paginas, p.paginas, 'páginas'); }
+  else {
+    set(form.genero, p.genero, 'género');
+    if (!plataforma && p.plataforma) { plataforma = autoPlat = p.plataforma; form.plataformaOtro.value = p.plataformaOtro || ''; rellenados.push('plataforma'); }
+    if (tipo === 'pelicula') set(form.duracion, p.duracion, 'duración');
+    else {
+      set(form.duracionCap, p.duracionCap, 'duración del capítulo');
+      const conTemp = hechos.filter(i => i.temporada != null);
+      if (!form.temporada.value && conTemp.length) {
+        const sig = Math.max(...conTemp.map(i => i.temporadaFin || i.temporada)) + 1;
+        form.temporada.value = sig; autoCampos.push({ el: form.temporada, v: sig }); rellenados.push('siguiente temporada');
+      } else set(form.temporada, textoTemporadas(p), 'temporada');
+    }
+  }
+  if (p.portada && !portadaSel?.url) { portadaSel = { url: p.portada, fuente: 'tu historial', anilistId: p.anilistId, isbn: p.isbn }; mostrarPortadaForm(); rellenados.push('portada'); }
+  pintarChips();
+  const hint = $('#autoHint'); hint.classList.remove('oferta');
+  hint.textContent = rellenados.length ? `✓ Rellenado con lo que ya tenías: ${rellenados.join(', ')}.` : 'Ya estaba todo rellenado.';
+  hint.hidden = false;
+  pintarDuplicado();
+}
+/** Al escribir a mano un título que ya tienes, ofrece rellenar (no lo hace solo: así nada se mueve al tocar otro botón). */
+function ofrecerAuto() {
+  const hint = $('#autoHint'), t = normal(campoTitulo().value.trim());
+  if (editandoId || !t || t === ultimoAuto) { if (!ultimoAuto) hint.hidden = true; return; }
+  const p = visibles().filter(i => i.tipo === tipo && normal(i.titulo) === t).sort((a, b) => ms(b.actualizado) - ms(a.actualizado))[0];
+  if (!p) { hint.hidden = true; return; }
+  hint.classList.add('oferta');
+  hint.innerHTML = `Ya tienes «${esc(p.titulo)}».<button type="button" id="btnAuto">Rellenar con sus datos</button>`;
+  hint.hidden = false;
+}
+$('#autoHint').addEventListener('click', e => { if (e.target.id === 'btnAuto') autocompletar(); });
+for (const campo of [form.titulo, form.libro]) {
+  campo.addEventListener('input', e => {
+    if (ultimoAuto && normal(campo.value.trim()) !== ultimoAuto) deshacerAuto();
+    // Elegir una sugerencia de la lista (datalist) rellena al momento; escribir a mano solo lo ofrece
+    if (!e.inputType || e.inputType === 'insertReplacementText') autocompletar(); else ofrecerAuto();
+    pintarDuplicado();
+  });
+}
+form.temporada.addEventListener('input', pintarDuplicado);
+
+/* ---------------- portadas y datos automáticos (anime: AniList · libros: Google Books / Open Library) ---------------- */
+let portadaSel = null; // { url, fuente, anilistId?, isbn? }
+function mostrarPortadaForm() {
+  const caja = $('#portadaForm');
+  if (!portadaSel?.url) { caja.hidden = true; return; }
+  $('#portadaImg').src = portadaSel.url; $('#portadaFuente').textContent = portadaSel.fuente ? `De ${portadaSel.fuente}` : '';
+  caja.hidden = false;
+}
+$('#quitarPortada').addEventListener('click', () => { portadaSel = null; mostrarPortadaForm(); });
+// Si la portada no carga (p. ej. Open Library no la tiene para ese ISBN), no se guarda
+$('#portadaImg').addEventListener('error', () => { if (portadaSel) portadaSel.url = ''; $('#portadaForm').hidden = true; });
+/** Un resultado cuya portada no carga pasa a «sin portada» (así nunca se guarda una imagen rota). */
+window.portadaRota = (img, n) => {
+  const lista = img.closest('#compLista') ? resComp : resultados, libro = !!lista[n]?.ext?.isbn || tipo === 'libro';
+  if (lista[n]) lista[n].portada = '';
+  const small = img.parentNode.querySelector('small'); if (small && !small.textContent.includes('sin portada')) small.textContent += ' · sin portada';
+  img.outerHTML = `<span class="sin">${libro ? '📖' : '🍥'}</span>`;
+};
+
+const GENERO_ANILIST = { Action: 'Acción', Adventure: 'Aventura', Comedy: 'Comedia', Drama: 'Drama', Fantasy: 'Fantasía',
+  Horror: 'Terror', 'Mahou Shoujo': 'Fantasía', Mecha: 'Mecha', Music: 'Musical', Mystery: 'Misterio', Psychological: 'Psicológico',
+  Romance: 'Romance', 'Sci-Fi': 'Ciencia ficción', 'Slice of Life': 'Slice of life', Sports: 'Deportes', Supernatural: 'Sobrenatural', Thriller: 'Suspense' };
+const FORMATO_ANILIST = { TV: 'Serie', TV_SHORT: 'Serie corta', MOVIE: 'Película', SPECIAL: 'Especial', OVA: 'OVA', ONA: 'ONA', MUSIC: 'Musical' };
+const https = u => (u ? String(u).replace(/^http:\/\//, 'https://').replace('&edge=curl', '') : '');
+const fechaFuzzy = d => (d?.year && d?.month && d?.day ? `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}` : '');
+
+async function pedir(url, opt = {}) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 10000);
+  try { return await fetch(url, { ...opt, signal: ctl.signal }); } finally { clearTimeout(t); }
+}
+async function buscarAnime(q) {
+  const query = `query($q:String){Page(perPage:10){media(search:$q,type:ANIME,isAdult:false,sort:SEARCH_MATCH){
+    id title{romaji english} format episodes duration genres status seasonYear startDate{year month day}
+    coverImage{large extraLarge} nextAiringEpisode{airingAt episode}}}}`;
+  const r = await pedir('https://graphql.anilist.co', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ query, variables: { q } }) });
+  if (r.status === 429) throw new Error('AniList está saturado ahora mismo. Prueba en un minuto.');
+  if (!r.ok) throw new Error(`AniList respondió ${r.status}.`);
+  const lista = (await r.json())?.data?.Page?.media || [];
+  return lista.map(m => {
+    const titulo = m.title?.english || m.title?.romaji || '', alt = m.title?.english && m.title?.romaji !== m.title?.english ? m.title.romaji : '';
+    const genero = (m.genres || []).map(g => GENERO_ANILIST[g]).find(Boolean) || '';
+    let estreno = '';
+    if (m.status === 'NOT_YET_RELEASED') estreno = fechaFuzzy(m.startDate);
+    else if (m.nextAiringEpisode?.episode === 1) estreno = iso(new Date(m.nextAiringEpisode.airingAt * 1000));
+    const sub = [FORMATO_ANILIST[m.format] || '', m.seasonYear || '', m.episodes ? `${m.episodes} cap.` : m.status === 'RELEASING' ? 'En emisión' : '',
+      m.duration ? `${m.duration} min` : '', genero].filter(Boolean).join(' · ');
+    return { titulo, alt, sub, portada: https(m.coverImage?.large || m.coverImage?.extraLarge), fuente: 'AniList',
+      datos: { capitulos: m.episodes, duracionCap: m.duration, genero, estreno }, ext: { anilistId: m.id } };
+  }).filter(x => x.titulo);
+}
+async function buscarLibroGoogle(q) {
+  const r = await pedir(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=15&printType=books`);
+  if (!r.ok) throw new Error(`Google Books respondió ${r.status}.`);
+  const items = (await r.json())?.items || [];
+  return items.map(v => {
+    const vi = v.volumeInfo || {}, ids = vi.industryIdentifiers || [];
+    const isbn = (ids.find(x => x.type === 'ISBN_13') || ids.find(x => x.type === 'ISBN_10'))?.identifier || '';
+    const portada = https(vi.imageLinks?.thumbnail || vi.imageLinks?.smallThumbnail) || (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false` : '');
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(vi.publishedDate || '') ? vi.publishedDate : '';
+    return { titulo: vi.title || '', alt: vi.subtitle || '', idioma: vi.language || '',
+      sub: [(vi.authors || []).join(', '), (vi.publishedDate || '').slice(0, 4), vi.pageCount ? `${vi.pageCount} págs.` : '', (vi.language || '').toUpperCase()].filter(Boolean).join(' · '),
+      portada, fuente: 'Google Books', datos: { autor: (vi.authors || []).join(', '), paginas: vi.pageCount, estreno: fecha > hoyISO() ? fecha : '' }, ext: { isbn } };
+  }).filter(x => x.titulo).sort((a, b) => (b.idioma === 'es') - (a.idioma === 'es')); // primero las ediciones en español
+}
+async function buscarLibroOpenLibrary(q) {
+  const r = await pedir(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=15&fields=key,title,author_name,number_of_pages_median,cover_i,first_publish_year,isbn`);
+  if (!r.ok) throw new Error(`Open Library respondió ${r.status}.`);
+  return ((await r.json())?.docs || []).map(d => ({
+    titulo: d.title || '', alt: '', sub: [(d.author_name || []).slice(0, 2).join(', '), d.first_publish_year || '', d.number_of_pages_median ? `${d.number_of_pages_median} págs.` : ''].filter(Boolean).join(' · '),
+    portada: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg` : '', fuente: 'Open Library',
+    datos: { autor: (d.author_name || [])[0] || '', paginas: d.number_of_pages_median, estreno: '' }, ext: { isbn: (d.isbn || [])[0] || '' },
+  })).filter(x => x.titulo);
+}
+async function buscarLibro(q) {
+  try { const l = await buscarLibroGoogle(q); if (l.length) return l; } catch { /* si Google falla, se prueba con Open Library */ }
+  return buscarLibroOpenLibrary(q);
+}
+
+let resultados = [];
+function abrirBusqueda() {
+  const libro = tipo === 'libro';
+  $('#busTitulo').textContent = libro ? 'Buscar libro' : 'Buscar anime';
+  $('#busFuente').textContent = libro ? 'Datos y portadas de Google Books y Open Library' : 'Datos y portadas de AniList';
+  const q = [campoTitulo().value.trim(), libro ? form.autor.value.trim() : ''].filter(Boolean).join(' ');
+  $('#busQ').value = q; $('#busQ').placeholder = libro ? 'Título y, si quieres, autor' : 'Título del anime';
+  $('#busLista').innerHTML = ''; $('#busEstado').textContent = q ? '' : 'Escribe el título y pulsa Buscar.';
+  $('#busqueda').showModal();
+  if (q) buscarAhora(); else $('#busQ').focus();
+}
+async function buscarAhora() {
+  const q = $('#busQ').value.trim(); if (!q) return;
+  const libro = tipo === 'libro', est = $('#busEstado'), ul = $('#busLista');
+  est.textContent = 'Buscando…'; ul.innerHTML = '';
+  if (!navigator.onLine) { est.textContent = 'Sin conexión. Puedes rellenarlo a mano.'; return; }
+  try {
+    resultados = libro ? await buscarLibro(q) : await buscarAnime(q);
+    est.textContent = resultados.length ? '' : 'No he encontrado nada. Prueba con otro título (en anime, a veces funciona mejor en inglés o japonés).';
+    ul.innerHTML = resultados.map((r, n) => `<li><button type="button" class="bus-res" data-res="${n}">
+      ${r.portada ? `<img src="${esc(r.portada)}" alt="" loading="lazy" onerror="portadaRota(this, ${n})">` : `<span class="sin">${libro ? '📖' : '🍥'}</span>`}
+      <span><b>${esc(r.titulo)}</b>${r.alt ? `<i>${esc(r.alt)}</i>` : ''}<small>${esc(r.sub)}</small></span></button></li>`).join('');
+  } catch (e) {
+    est.textContent = e.name === 'AbortError' ? 'La búsqueda ha tardado demasiado. Inténtalo de nuevo.'
+      : `${e.message && !e.message.startsWith('Failed') ? e.message : 'No se pudo conectar.'} Puedes rellenarlo a mano.`;
+  }
+}
+/** Aplica un resultado: rellena lo que esté vacío y pone la portada. */
+function aplicarResultado(r) {
+  const hechos = [], set = (el, v, nombre) => { if (v != null && v !== '' && !el.value) { el.value = v; hechos.push(nombre); } };
+  set(campoTitulo(), r.titulo, 'título');
+  if (tipo === 'libro') { set(form.autor, r.datos.autor, 'autor'); if (modo === 'hecho') set(form.paginas, r.datos.paginas, 'páginas'); }
+  else {
+    if (modo === 'hecho') { set(form.capitulos, r.datos.capitulos, 'capítulos'); set(form.duracionCap, r.datos.duracionCap, 'duración'); }
+    set(form.genero, r.datos.genero, 'género');
+  }
+  if (modo === 'pendiente') set(form.estreno, r.datos.estreno, 'fecha de estreno');
+  if (r.portada) { portadaSel = { url: r.portada, fuente: r.fuente, ...r.ext }; hechos.push('portada'); }
+  else portadaSel = { url: '', fuente: r.fuente, ...r.ext };
+  mostrarPortadaForm();
+  const hint = $('#autoHint'); hint.classList.remove('oferta');
+  hint.textContent = hechos.length ? `✓ Datos de ${r.fuente}: ${hechos.join(', ')}. Puedes corregir lo que quieras.` : `Ya estaba todo rellenado.`;
+  hint.hidden = false; pintarDuplicado();
+}
+$('#btnBuscarDatos').addEventListener('click', abrirBusqueda);
+$('#busForm').addEventListener('submit', e => { e.preventDefault(); buscarAhora(); });
+$('#busCerrar').addEventListener('click', () => $('#busqueda').close());
+$('#busLista').addEventListener('click', e => {
+  const b = e.target.closest('[data-res]'); if (!b) return;
+  aplicarResultado(resultados[Number(b.dataset.res)]); $('#busqueda').close();
+});
+
+/* ---- completar portadas de registros antiguos (asistente, uno a uno) ---- */
+const sinPortada = () => visibles().filter(i => (i.tipo === 'anime' || i.tipo === 'libro') && !i.portada && !i.sinPortada)
+  .sort((a, b) => (a.tipo === 'libro') - (b.tipo === 'libro') || a.titulo.localeCompare(b.titulo, 'es'));
+let cola = [], posCola = 0, anadidas = 0, saltadas = 0, resComp = [];
+function abrirCompletar() {
+  cola = sinPortada().map(i => i.id); posCola = 0; anadidas = 0; saltadas = 0;
+  if (!cola.length) { avisar('Todos tus animes y libros ya tienen portada'); return; }
+  $('#ajustes').close(); $('#completar').showModal(); mostrarActual();
+}
+function mostrarActual() {
+  const total = cola.length;
+  $('#compBarra').style.width = `${Math.round(100 * posCola / total)}%`;
+  if (posCola >= total) return finCompletar();
+  const i = items.find(x => x.id === cola[posCola]);
+  if (!i || i.borrado || i.portada) { posCola++; return mostrarActual(); }
+  $('#compProgreso').textContent = `${posCola + 1} de ${total}`;
+  const det = [i.tipo === 'libro' ? i.autor : etiquetaTemp(i), esPend(i) ? (i.tipo === 'libro' ? 'Por leer' : 'Por ver') : anioDe(i)].filter(Boolean).join(' · ');
+  $('#compActual').className = 'comp-actual';
+  $('#compActual').innerHTML = `<span class="que">${ICONO_TIPO[i.tipo]} ${NOMBRE_TIPO[i.tipo]} sin portada</span><h3>${esc(i.titulo)}</h3>${det ? `<p>${esc(det)}</p>` : ''}`;
+  $('#compForm').hidden = false; $('#compPie').hidden = false;
+  $('#compQ').value = [i.titulo, i.tipo === 'libro' ? i.autor : ''].filter(Boolean).join(' ');
+  buscarCompletar();
+}
+async function buscarCompletar() {
+  const i = items.find(x => x.id === cola[posCola]); if (!i) return;
+  const q = $('#compQ').value.trim(), est = $('#compEstado'), ul = $('#compLista'), libro = i.tipo === 'libro';
+  ul.innerHTML = ''; resComp = [];
+  if (!q) { est.textContent = 'Escribe un título y pulsa Buscar.'; return; }
+  if (!navigator.onLine) { est.textContent = 'Sin conexión. Puedes salir y seguir más tarde.'; return; }
+  est.textContent = 'Buscando…';
+  const idBuscado = i.id;
+  try {
+    const res = libro ? await buscarLibro(q) : await buscarAnime(q);
+    if (cola[posCola] !== idBuscado) return; // ya se ha pasado al siguiente
+    resComp = res.slice(0, 6);
+    est.textContent = resComp.length ? '' : 'Sin resultados. Prueba con otro texto, o salta este.';
+    ul.innerHTML = resComp.map((r, n) => `<li><button type="button" class="bus-res${n === 0 ? ' prob' : ''}" data-comp="${n}">
+      ${r.portada ? `<img src="${esc(r.portada)}" alt="" loading="lazy" onerror="portadaRota(this, ${n})">` : `<span class="sin">${libro ? '📖' : '🍥'}</span>`}
+      <span>${n === 0 ? '<span class="etq">Más probable</span>' : ''}<b>${esc(r.titulo)}</b>${r.alt ? `<i>${esc(r.alt)}</i>` : ''}<small>${esc(r.sub)}${r.portada ? '' : ' · sin portada'}</small></span></button></li>`).join('');
+  } catch (e) {
+    if (cola[posCola] !== idBuscado) return;
+    est.textContent = e.name === 'AbortError' ? 'La búsqueda ha tardado demasiado. Pulsa Buscar para reintentar.'
+      : `${e.message && !e.message.startsWith('Failed') ? e.message : 'No se pudo conectar.'} Pulsa Buscar para reintentar, o salta este.`;
+  }
+}
+/** Guarda la portada elegida y rellena lo que estuviera vacío (sin tocar lo que ya tenías). */
+function usarResultado(n) {
+  const r = resComp[n], i = items.find(x => x.id === cola[posCola]);
+  if (!r || !i) return;
+  if (!r.portada) { avisar('Ese resultado no tiene portada: elige otro o salta'); return; }
+  const vacio = k => i[k] == null || i[k] === '';
+  i.portada = r.portada;
+  if (r.ext?.isbn && vacio('isbn')) i.isbn = r.ext.isbn;
+  if (r.ext?.anilistId && vacio('anilistId')) i.anilistId = r.ext.anilistId;
+  if (i.tipo === 'libro') { if (vacio('autor') && r.datos.autor) i.autor = r.datos.autor; if (!esPend(i) && vacio('paginas') && r.datos.paginas) i.paginas = r.datos.paginas; }
+  else {
+    if (!esPend(i)) { if (vacio('capitulos') && r.datos.capitulos) i.capitulos = r.datos.capitulos; if (vacio('duracionCap') && r.datos.duracionCap) i.duracionCap = r.datos.duracionCap; }
+    if (vacio('genero') && r.datos.genero) i.genero = r.datos.genero;
+  }
+  if (esPend(i) && vacio('estreno') && r.datos.estreno) i.estreno = r.datos.estreno;
+  i.actualizado = sello(i); sucio = true; guardarLocal();
+  anadidas++; posCola++; mostrarActual();
+}
+function finCompletar() {
+  $('#compProgreso').textContent = ''; $('#compBarra').style.width = '100%';
+  $('#compForm').hidden = true; $('#compPie').hidden = true; $('#compLista').innerHTML = ''; $('#compEstado').textContent = '';
+  const quedan = sinPortada().length;
+  $('#compActual').className = 'comp-actual fin';
+  $('#compActual').innerHTML = `<h3>${anadidas ? `✓ ${anadidas} ${anadidas === 1 ? 'portada añadida' : 'portadas añadidas'}` : 'Sin cambios'}</h3>
+    <p>${saltadas ? `${saltadas} ${saltadas === 1 ? 'saltado' : 'saltados'}: puedes repasarlos otro día desde Ajustes.` : quedan ? '' : 'Todos tus animes y libros tienen ya portada.'}</p>
+    <button type="button" class="principal" id="compListo">Listo</button>`;
+  pintarTodo(); if (anadidas) sincronizar();
+}
+function cerrarCompletar() { $('#completar').close(); pintarTodo(); if (anadidas) sincronizar(); }
+$('#btnCompletar').addEventListener('click', abrirCompletar);
+$('#compCerrar').addEventListener('click', cerrarCompletar);
+$('#compForm').addEventListener('submit', e => { e.preventDefault(); buscarCompletar(); });
+$('#compLista').addEventListener('click', e => { const b = e.target.closest('[data-comp]'); if (b) usarResultado(Number(b.dataset.comp)); });
+$('#compSaltar').addEventListener('click', () => { saltadas++; posCola++; mostrarActual(); });
+$('#compNunca').addEventListener('click', () => {
+  const i = items.find(x => x.id === cola[posCola]);
+  if (i) { i.sinPortada = true; i.actualizado = sello(i); sucio = true; guardarLocal(); }
+  posCola++; mostrarActual();
+});
+$('#compActual').addEventListener('click', e => { if (e.target.id === 'compListo') cerrarCompletar(); });
+
+/** Miniatura de portada en las listas; si la imagen falla, vuelve la barrita de color. */
+const marcaDe = i => i.portada
+  ? `<span class="portada-mini"><img src="${esc(i.portada)}" alt="" loading="lazy" onerror="this.parentNode.outerHTML='<span class=&quot;marca ${i.tipo}&quot;></span>'"></span>`
+  : `<span class="marca ${i.tipo}"></span>`;
+
 const num = v => (v === '' || v == null ? null : Math.max(0, Number(v)));
 
 form.addEventListener('submit', e => {
@@ -253,8 +627,16 @@ form.addEventListener('submit', e => {
   if (modo === 'hecho' && (!Number.isInteger(anio) || anio < 1900 || anio > ANIO_ACTUAL + 1)) {
     form.anio.classList.add('mal'); form.anio.focus(); avisar('Revisa el año'); return;
   }
+  const temps = tipo === 'serie' || tipo === 'anime' ? leerTemporadas(form.temporada.value) : { ini: null, fin: null };
+  if (!temps) { form.temporada.classList.add('mal'); form.temporada.focus(); avisar('Temporada: un número o un rango, p. ej. 1-4'); return; }
   const precio = tipo === 'libro' && modo === 'hecho' ? leerPrecio(form.precio.value) : null;
   if (Number.isNaN(precio)) { form.precio.classList.add('mal'); form.precio.focus(); avisar('Revisa el precio (ej. 19,90)'); return; }
+  const dup = analizarDup();
+  if (modo === 'hecho' && dup.choca.length && !form.revisionado.checked) {
+    const u = dup.choca[0], que = tipo === 'libro' ? 'relectura' : 'revisionado';
+    if (!confirm(`Ya tienes «${u.titulo}» en ${tipo === 'libro' ? 'Leídos' : 'Vistas'} (${anioDe(u)}).\n\n¿Guardarlo otra vez sin marcarlo como ${que}?`)) return;
+  }
+  if (modo === 'pendiente' && dup.pend.length && !confirm(`«${dup.pend[0].titulo}» ya está en ${tipo === 'libro' ? 'Por leer' : 'Por ver'}. ¿Añadirlo otra vez?`)) return;
   const previo = editandoId ? items.find(i => i.id === editandoId) : null;
   const base = { id: previo ? previo.id : nuevoId(), tipo, titulo, anio, creado: previo ? previo.creado : ahora(),
     actualizado: sello(previo), por: cfg?.nombre || previo?.por || '' };
@@ -262,19 +644,28 @@ form.addEventListener('submit', e => {
   if (modo === 'pendiente') {
     item = { ...base, estado: 'pendiente', nota: form.nota.value.trim(), ganas: form.ganas.checked };
     delete item.anio;
+    if (form.estreno.value) item.estreno = form.estreno.value;
     if (tipo === 'libro') item.autor = form.autor.value.trim();
     else {
       Object.assign(item, { genero: form.genero.value.trim(), plataforma, plataformaOtro: plataforma === 'Otros' ? form.plataformaOtro.value.trim() : '' });
-      if (tipo !== 'pelicula') item.temporada = num(form.temporada.value);
+      if (tipo !== 'pelicula') { item.temporada = temps.ini; if (temps.fin) item.temporadaFin = temps.fin; }
     }
   } else if (tipo === 'libro') {
-    item = { ...base, autor: form.autor.value.trim(), formato, paginas: num(form.paginas.value), precio, fechaFin: form.fechaFin.value && Number(form.fechaFin.value.slice(0, 4)) === anio ? form.fechaFin.value : null };
+    item = { ...base, autor: form.autor.value.trim(), formato, paginas: num(form.paginas.value), precio, recomienda: form.recomienda.checked, fechaFin: form.fechaFin.value && Number(form.fechaFin.value.slice(0, 4)) === anio ? form.fechaFin.value : null };
   } else {
     item = { ...base, genero: form.genero.value.trim(), plataforma,
       plataformaOtro: plataforma === 'Otros' ? form.plataformaOtro.value.trim() : '', recomienda: form.recomienda.checked,
       fechaVisto: previo?.fechaVisto && Number(previo.fechaVisto.slice(0, 4)) === anio ? previo.fechaVisto : (anio === ANIO_ACTUAL ? hoyISO() : null) };
     if (tipo === 'pelicula') item.duracion = num(form.duracion.value);
-    else Object.assign(item, { temporada: num(form.temporada.value), capitulos: num(form.capitulos.value), duracionCap: num(form.duracionCap.value) });
+    else { Object.assign(item, { temporada: temps.ini, capitulos: num(form.capitulos.value), duracionCap: num(form.duracionCap.value) }); if (temps.fin) item.temporadaFin = temps.fin; }
+  }
+  if (portadaSel?.url) item.portada = portadaSel.url;
+  else if (previo?.sinPortada) item.sinPortada = true;
+  if (portadaSel?.anilistId) item.anilistId = portadaSel.anilistId;
+  if (portadaSel?.isbn) item.isbn = portadaSel.isbn;
+  if (modo === 'hecho') {
+    if (form.revisionado.checked) item.revisionado = true;
+    if (item.recomienda && form.porque.value.trim()) item.porque = form.porque.value.trim();
   }
   if (modo === 'hecho' && (previo?.dePendiente || (previo && esPend(previo)))) item.dePendiente = true;
   if (previo) items[items.indexOf(previo)] = item; else items.push(item);
@@ -300,14 +691,16 @@ form.addEventListener('submit', e => {
 function editar(id) {
   const it = items.find(i => i.id === id); if (!it) return;
   editandoId = id; ponerTipo(it.tipo); ponerModo(esPend(it) ? 'pendiente' : 'hecho'); limpiarForm(); form.anio.value = anioDe(it);
-  form.nota.value = it.nota || ''; form.ganas.checked = !!it.ganas;
+  form.nota.value = it.nota || ''; form.ganas.checked = !!it.ganas; form.estreno.value = it.estreno || '';
+  form.revisionado.checked = !!it.revisionado; form.recomienda.checked = !!it.recomienda; form.porque.value = it.porque || '';
+  portadaSel = it.portada || it.anilistId || it.isbn ? { url: it.portada || '', anilistId: it.anilistId, isbn: it.isbn } : null; mostrarPortadaForm();
   if (it.tipo === 'libro') {
     form.libro.value = it.titulo; form.autor.value = it.autor || ''; formato = it.formato || 'Kindle';
     form.paginas.value = it.paginas ?? ''; form.precio.value = it.precio != null ? String(it.precio).replace('.', ',') : ''; form.fechaFin.value = it.fechaFin || '';
   } else {
     form.titulo.value = it.titulo; form.genero.value = it.genero || ''; plataforma = it.plataforma || null;
-    form.plataformaOtro.value = it.plataformaOtro || ''; form.recomienda.checked = !!it.recomienda;
-    form.duracion.value = it.duracion ?? ''; form.temporada.value = it.temporada ?? '';
+    form.plataformaOtro.value = it.plataformaOtro || '';
+    form.duracion.value = it.duracion ?? ''; form.temporada.value = textoTemporadas(it);
     form.capitulos.value = it.capitulos ?? ''; form.duracionCap.value = it.duracionCap ?? '';
   }
   pintarChips();
@@ -359,14 +752,34 @@ const normal = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toL
 
 let filtro = 'todo';
 let anioV = 'todos', anioL = 'todos';
+/* Listas largas: se dibujan por tandas; «Ver más» añade otra tanda. Al filtrar o buscar se vuelve a la primera. */
+const TANDA = 40;
+const lim = { v: TANDA, l: TANDA, pv: TANDA, pl: TANDA };
+const reinicia = (k, f) => () => { lim[k] = TANDA; f(); };
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-mas]'); if (!b) return;
+  const k = b.dataset.mas; lim[k] += TANDA;
+  ({ v: pintarVistas, l: pintarLeidos, pv: pintarPorVer, pl: pintarPorLeer })[k]();
+});
+const botonMas = (k, resto) => resto > 0 ? `<button type="button" class="ver-mas" data-mas="${k}">Ver más · quedan ${resto}</button>` : '';
+/** Agrupa por año y dibuja solo hasta «max» elementos; las cabeceras llevan los totales del año completo. */
+function porTandas(lista, max, cabecera, fila) {
+  let quedan = max, h = '';
+  for (const [anio, l] of porAnio(lista)) {
+    if (quedan <= 0) break;
+    const vis = l.slice(0, quedan); quedan -= vis.length;
+    h += cabecera(anio, l) + `<ul class="lista">${vis.map(i => fila(i, anio)).join('')}</ul>`;
+  }
+  return h;
+}
 $('#filtroVistas').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if (!b) return; filtro = b.dataset.f;
-  $$('#filtroVistas .chip').forEach(c => c.classList.toggle('on', c === b)); pintarVistas();
+  $$('#filtroVistas .chip').forEach(c => c.classList.toggle('on', c === b)); lim.v = TANDA; pintarVistas();
 });
-$('#anioVistas').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { anioV = b.dataset.a; pintarVistas(); } });
-$('#anioLeidos').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { anioL = b.dataset.a; pintarLeidos(); } });
-$('#buscarVistas').addEventListener('input', pintarVistas);
-$('#buscarLeidos').addEventListener('input', pintarLeidos);
+$('#anioVistas').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { anioV = b.dataset.a; lim.v = TANDA; pintarVistas(); } });
+$('#anioLeidos').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) { anioL = b.dataset.a; lim.l = TANDA; pintarLeidos(); } });
+$('#buscarVistas').addEventListener('input', reinicia('v', () => pintarVistas()));
+$('#buscarLeidos').addEventListener('input', reinicia('l', () => pintarLeidos()));
 document.addEventListener('click', e => { const b = e.target.closest('.item'); if (b) editar(b.dataset.id); });
 
 /** Pinta los chips de año (solo los años con algo) y devuelve el año elegido, válido. */
@@ -387,6 +800,23 @@ function porAnio(lista) {
 }
 const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
+/* Una serie o anime apuntado por temporadas cuenta como un solo título; cada película cuenta por separado. */
+const claveObra = i => i.tipo === 'pelicula' ? 'id:' + i.id : i.tipo + '|' + normal(i.titulo);
+function obras(lista) {
+  const m = new Map();
+  for (const i of lista) {
+    const k = claveObra(i), o = m.get(k) || { titulo: i.titulo, tipo: i.tipo, min: 0, rec: false, registros: 0 };
+    o.min += minutos(i); o.rec = o.rec || !!i.recomienda; o.registros++; m.set(k, o);
+  }
+  return [...m.values()];
+}
+/** Como ranking(), pero cada serie suma una vez aunque tenga varias temporadas apuntadas. */
+function rankingObras(lista, f) {
+  const m = new Map();
+  for (const i of lista) { const v = f(i); if (!v) continue; if (!m.has(v)) m.set(v, new Set()); m.get(v).add(claveObra(i)); }
+  return [...m].map(([v, s]) => [v, s.size]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'es'));
+}
+
 function pintarVistas() {
   const todos = terminados().filter(i => i.tipo !== 'libro');
   anioV = chipsAnios($('#anioVistas'), todos, anioV);
@@ -397,30 +827,30 @@ function pintarVistas() {
   const lista = base.filter(i => !q || normal([i.titulo, i.genero, donde(i), NOMBRE_TIPO[i.tipo]].join(' ')).includes(q))
     .sort(porFecha(i => i.fechaVisto || i.creado));
   const totMin = base.reduce((s, i) => s + minutos(i), 0);
-  const rec = base.length ? Math.round(100 * base.filter(i => i.recomienda).length / base.length) : 0;
+  const ob = obras(base);
+  const rec = ob.length ? Math.round(100 * ob.filter(o => o.rec).length / ob.length) : 0;
   const cuando = anioV === 'todos' ? '' : ` en ${anioV}`;
   $('#statsVistas').innerHTML = `
-    <div class="stat"><b>${base.length}</b><span>${filtro === 'pelicula' ? 'películas' : 'títulos'}${cuando}</span></div>
+    <div class="stat"><b>${ob.length}</b><span>${{ pelicula: 'películas', serie: 'series', anime: 'animes' }[filtro] || 'títulos'}${cuando}</span></div>
     <div class="stat"><b>${horas(totMin)}</b><span>vistas${cuando}</span></div>
     <div class="stat"><b>${rec}%</b><span>recomendadas</span></div>`;
   if (!lista.length) { $('#listaVistas').innerHTML = `<ul class="lista">${vacio(todos.length, '¿Qué has visto últimamente?', 'Añádelo desde el botón central.')}</ul>`; return; }
-  $('#listaVistas').innerHTML = porAnio(lista).map(([anio, l]) => {
+  $('#listaVistas').innerHTML = porTandas(lista, lim.v, (anio, l) => {
     const min = l.reduce((s, i) => s + minutos(i), 0);
-    return `<h2 class="grupo"><span>${anio}</span><small>${plural(l.length, 'título', 'títulos')}${min ? ' · ' + horas(min) : ''}</small></h2>
-    <ul class="lista">${l.map(i => {
+    return `<h2 class="grupo"><span>${anio}</span><small>${plural(obras(l).length, 'título', 'títulos')}${min ? ' · ' + horas(min) : ''}</small></h2>`;
+  }, (i, anio) => {
       const partes = [NOMBRE_TIPO[i.tipo]];
       if (i.tipo === 'pelicula') { if (i.duracion) partes.push(`${i.duracion} min`); }
       else {
-        if (i.temporada != null) partes.push(`T${i.temporada}`);
+        if (etiquetaTemp(i)) partes.push(etiquetaTemp(i));
         if (i.capitulos) partes.push(`${i.capitulos} cap.${i.duracionCap ? ` × ${i.duracionCap} min` : ''}`);
       }
       if (i.genero) partes.push(i.genero); if (donde(i)) partes.push(donde(i));
       const f = i.fechaVisto && Number(i.fechaVisto.slice(0, 4)) === anio ? fechaCorta(i.fechaVisto) : '';
-      return `<li><button class="item" data-id="${esc(i.id)}"><span class="marca ${i.tipo}"></span><span class="cuerpo">
-        <span class="t"><em>${esc(i.titulo)}</em>${i.recomienda ? '<span class="rec" title="La recomendaría">👍</span>' : ''}</span>
-        <span class="m">${partes.map(esc).join(' · ')}</span></span><span class="d">${f}</span></button></li>`;
-    }).join('')}</ul>`;
-  }).join('');
+      return `<li><button class="item" data-id="${esc(i.id)}">${marcaDe(i)}<span class="cuerpo">
+        <span class="t"><em>${esc(i.titulo)}</em>${i.recomienda ? '<span class="rec" title="La recomendaría">👍</span>' : ''}${i.revisionado ? '<span class="flag">↻ Revisionado</span>' : ''}</span>
+        <span class="m">${partes.map(esc).join(' · ')}</span>${i.porque ? `<span class="nota">«${esc(i.porque)}»</span>` : ''}</span><span class="d">${f}</span></button></li>`;
+  }) + botonMas('v', lista.length - lim.v);
 }
 
 function pintarLeidos() {
@@ -440,29 +870,32 @@ function pintarLeidos() {
     <div class="stat"><b>${pags.toLocaleString('es-ES')}</b><span>páginas</span></div>
     <div class="stat"><b>${conPags.length ? Math.round(pags / conPags.length).toLocaleString('es-ES') : '–'}</b><span>págs. por libro</span></div>`;
   if (!lista.length) { $('#listaLeidos').innerHTML = `<ul class="lista">${vacio(todos.length, '¿Qué has leído últimamente?', 'Añádelo desde el botón central eligiendo «Libro».')}</ul>`; return; }
-  $('#listaLeidos').innerHTML = porAnio(lista).map(([anio, l]) => {
+  $('#listaLeidos').innerHTML = porTandas(lista, lim.l, (anio, l) => {
     const p = l.reduce((s, i) => s + (i.paginas || 0), 0);
     const gasto = l.reduce((s, i) => s + (i.precio || 0), 0);
-    return `<h2 class="grupo"><span>${anio}</span><small>${plural(l.length, 'libro', 'libros')}${p ? ' · ' + p.toLocaleString('es-ES') + ' págs.' : ''}${gasto ? ' · ' + euros(gasto) : ''}</small></h2>
-    <ul class="lista">${l.map(i => {
+    return `<h2 class="grupo"><span>${anio}</span><small>${plural(l.length, 'libro', 'libros')}${p ? ' · ' + p.toLocaleString('es-ES') + ' págs.' : ''}${gasto ? ' · ' + euros(gasto) : ''}</small></h2>`;
+  }, i => {
       const partes = [i.autor, i.formato, i.paginas ? `${i.paginas} págs.` : '', i.precio != null ? euros(i.precio) : ''].filter(Boolean);
-      return `<li><button class="item" data-id="${esc(i.id)}"><span class="marca libro"></span><span class="cuerpo">
-        <span class="t"><em>${esc(i.titulo)}</em></span><span class="m">${partes.map(esc).join(' · ')}</span></span>
+      return `<li><button class="item" data-id="${esc(i.id)}">${marcaDe(i)}<span class="cuerpo">
+        <span class="t"><em>${esc(i.titulo)}</em>${i.recomienda ? '<span class="rec" title="Lo recomendaría">👍</span>' : ''}${i.revisionado ? '<span class="flag">↻ Relectura</span>' : ''}</span>
+        <span class="m">${partes.map(esc).join(' · ')}</span>${i.porque ? `<span class="nota">«${esc(i.porque)}»</span>` : ''}</span>
         <span class="d">${fechaCorta(i.fechaFin)}</span></button></li>`;
-    }).join('')}</ul>`;
-  }).join('');
+  }) + botonMas('l', lista.length - lim.l);
 }
 let filtroPV = 'todo', filtroPL = 'todo';
 $('#filtroPorVer').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if (!b) return; filtroPV = b.dataset.f;
-  $$('#filtroPorVer .chip').forEach(c => c.classList.toggle('on', c === b)); pintarPorVer();
+  $$('#filtroPorVer .chip').forEach(c => c.classList.toggle('on', c === b)); lim.pv = TANDA; pintarPorVer();
 });
 $('#filtroPorLeer').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if (!b) return; filtroPL = b.dataset.f;
-  $$('#filtroPorLeer .chip').forEach(c => c.classList.toggle('on', c === b)); pintarPorLeer();
+  $$('#filtroPorLeer .chip').forEach(c => c.classList.toggle('on', c === b)); lim.pl = TANDA; pintarPorLeer();
 });
-$('#buscarPorVer').addEventListener('input', pintarPorVer);
-$('#buscarPorLeer').addEventListener('input', pintarPorLeer);
+$('#buscarPorVer').addEventListener('input', reinicia('pv', () => pintarPorVer()));
+$('#buscarPorLeer').addEventListener('input', reinicia('pl', () => pintarPorLeer()));
+/** Fecha de estreno: futura → «📅 12 dic»; ya pasada → «Disponible». */
+const yaEstrenado = i => !i.estreno || i.estreno <= hoyISO();
+const fechaPend = i => i.estreno ? (yaEstrenado(i) ? 'Disponible' : `📅 ${fechaCorta(i.estreno)}`) : fechaCorta(i.creado);
 const ordenPend = (a, b) => (b.ganas ? 1 : 0) - (a.ganas ? 1 : 0) || (b.creado || '').localeCompare(a.creado || '');
 
 function filtrarPorVer() {
@@ -480,31 +913,33 @@ function filtrarPorLeer() {
     .sort(ordenPend);
 }
 const metaPend = i => i.tipo === 'libro' ? [i.autor].filter(Boolean)
-  : [NOMBRE_TIPO[i.tipo], i.temporada != null && i.tipo !== 'pelicula' ? `T${i.temporada}` : '', i.genero, donde(i)].filter(Boolean);
+  : [NOMBRE_TIPO[i.tipo], etiquetaTemp(i), i.genero, donde(i)].filter(Boolean);
 function filaPend(i) {
-  return `<li><button class="item" data-id="${esc(i.id)}"><span class="marca ${i.tipo}"></span><span class="cuerpo">
+  return `<li><button class="item" data-id="${esc(i.id)}">${marcaDe(i)}<span class="cuerpo">
     <span class="t"><em>${esc(i.titulo)}</em>${i.ganas ? '<span class="ganas" title="Muchas ganas">⭐</span>' : ''}</span>
     <span class="m">${metaPend(i).map(esc).join(' · ')}</span>${i.nota ? `<span class="nota">${esc(i.nota)}</span>` : ''}</span>
-    <span class="d">${fechaCorta(i.creado)}</span></button></li>`;
+    <span class="d">${fechaPend(i)}</span></button></li>`;
 }
 function pintarPorVer() {
   const total = pendientes().filter(i => i.tipo !== 'libro').length, l = filtrarPorVer();
   $('#elegirV').hidden = !total;
-  $('#listaPorVer').innerHTML = l.length ? l.map(filaPend).join('')
+  $('#listaPorVer').innerHTML = l.length ? l.slice(0, lim.pv).map(filaPend).join('') + botonMas('pv', l.length - lim.pv)
     : vacio(total, 'Nada pendiente todavía', 'Apunta lo que quieras ver desde el botón central, eligiendo «Lo tengo pendiente».');
 }
 function pintarPorLeer() {
   const total = pendientes().filter(i => i.tipo === 'libro').length, l = filtrarPorLeer();
   $('#elegirL').hidden = !total;
-  $('#listaPorLeer').innerHTML = l.length ? l.map(filaPend).join('')
+  $('#listaPorLeer').innerHTML = l.length ? l.slice(0, lim.pl).map(filaPend).join('') + botonMas('pl', l.length - lim.pl)
     : vacio(total, 'Nada pendiente todavía', 'Apunta lo que quieras leer desde el botón central, eligiendo «Libro» y «Lo tengo pendiente».');
 }
 
 /* «Elige por mí»: sorteo entre lo pendiente (con el filtro activo); lo que tiene ⭐ cuenta triple. */
 let sorteoLista = [], sorteoUltimo = null, sorteoLibro = false;
 function elegirPorMi(libros) {
-  const l = libros ? filtrarPorLeer() : filtrarPorVer();
-  if (!l.length) { avisar('No hay nada con ese filtro'); return; }
+  const todos_ = libros ? filtrarPorLeer() : filtrarPorVer();
+  if (!todos_.length) { avisar('No hay nada con ese filtro'); return; }
+  const l = todos_.filter(yaEstrenado); // lo que aún no ha salido no se puede ver/leer todavía
+  if (!l.length) { avisar(libros ? 'Lo que tienes aún no se ha publicado' : 'Lo que tienes aún no se ha estrenado'); return; }
   sorteoLista = l; sorteoUltimo = null; sorteoLibro = libros;
   $('#sorteoPre').textContent = libros ? '¿Y si lees…' : '¿Y si ves…';
   $('#sorteoOtra').disabled = l.length < 2;
@@ -517,8 +952,8 @@ function tirar() {
   for (const i of pool) { r -= peso(i); if (r < 0) { elegido = i; break; } }
   sorteoUltimo = elegido.id;
   const c = $('#sorteoCarta'), i = elegido;
-  const sub = i.tipo === 'libro' ? [i.autor] : [i.temporada != null && i.tipo !== 'pelicula' ? `Temporada ${i.temporada}` : '', i.genero, donde(i)];
-  c.innerHTML = `<span class="tipo-t">${NOMBRE_TIPO[i.tipo]}${i.ganas ? ' · ⭐ muchas ganas' : ''}</span><h3>${esc(i.titulo)}</h3>
+  const sub = i.tipo === 'libro' ? [i.autor] : [i.temporada == null ? '' : i.temporadaFin ? `Temporadas ${i.temporada}–${i.temporadaFin}` : `Temporada ${i.temporada}`, i.genero, donde(i)];
+  c.innerHTML = `${i.portada ? `<img class="sorteo-portada" src="${esc(i.portada)}" alt="" onerror="this.remove()">` : ''}<span class="tipo-t">${NOMBRE_TIPO[i.tipo]}${i.ganas ? ' · ⭐ muchas ganas' : ''}</span><h3>${esc(i.titulo)}</h3>
     ${sub.filter(Boolean).length ? `<p>${sub.filter(Boolean).map(esc).join(' · ')}</p>` : ''}${i.nota ? `<p class="nota">«${esc(i.nota)}»</p>` : ''}`;
   c.classList.remove('gira'); void c.offsetWidth; c.classList.add('gira');
 }
@@ -542,19 +977,23 @@ function datosAnio(Y) {
   const pant = T.filter(i => i.tipo !== 'libro'), libros = T.filter(i => i.tipo === 'libro');
   const min = pant.reduce((s, i) => s + minutos(i), 0), pags = libros.reduce((s, i) => s + (i.paginas || 0), 0);
   const conPags = libros.filter(i => i.paginas), conPrecio = libros.filter(i => i.precio != null);
-  const autores = ranking(libros, i => i.autor);
+  const autores = ranking(libros, i => i.autor), obP = obras(pant);
   return {
+    nTitulos: obP.length,
     Y, total: T.length, pant, libros, min, pags,
     pelis: pant.filter(i => i.tipo === 'pelicula'), series: pant.filter(i => i.tipo === 'serie'), animes: pant.filter(i => i.tipo === 'anime'),
     caps: pant.reduce((s, i) => s + (i.tipo !== 'pelicula' ? i.capitulos || 0 : 0), 0),
-    generos: ranking(pant, i => i.genero), plataformas: ranking(pant, donde),
-    masLarga: mayor(pant.filter(i => i.tipo !== 'pelicula'), minutos), peliLarga: mayor(pant.filter(i => i.tipo === 'pelicula'), i => i.duracion || 0),
-    rec: pant.filter(i => i.recomienda),
+    nSeries: obP.filter(o => o.tipo === 'serie').length, nAnimes: obP.filter(o => o.tipo === 'anime').length,
+    generos: rankingObras(pant, i => i.genero), plataformas: rankingObras(pant, donde),
+    masLarga: mayor(obP.filter(o => o.tipo !== 'pelicula'), o => o.min), peliLarga: mayor(pant.filter(i => i.tipo === 'pelicula'), i => i.duracion || 0),
+    rec: obP.filter(o => o.rec),
     media: conPags.length ? Math.round(pags / conPags.length) : 0, gordo: mayor(libros, i => i.paginas || 0),
     autor: autores[0] && autores[0][1] >= 2 ? autores[0] : null, nAutores: autores.length,
     kindle: libros.filter(i => i.formato === 'Kindle').length, papel: libros.filter(i => i.formato === 'Libro').length,
     gasto: conPrecio.reduce((s, i) => s + i.precio, 0), nPrecio: conPrecio.length,
     tachados: T.filter(i => i.dePendiente).length,
+    recLibros: libros.filter(i => i.recomienda),
+    revisionados: pant.filter(i => i.revisionado).length, relecturas: libros.filter(i => i.revisionado).length,
   };
 }
 function aniosConDatos() { return [...new Set(terminados().map(anioDe))].sort((a, b) => b - a); }
@@ -591,7 +1030,7 @@ function pintarResumen() {
   }
   let h = `<section class="res-t res-hero"><h3>Tu ${anioRes} en Mi Butaca<small>${anioRes === ANIO_ACTUAL ? 'En lo que va de año' : 'El año completo'}</small></h3>
     <div class="res-nums">
-      <div class="res-num"><b>${d.pant.length}</b><span>títulos vistos</span>${delta(d.pant.length, prev?.pant.length, '')}</div>
+      <div class="res-num"><b>${d.nTitulos}</b><span>títulos vistos</span>${delta(d.nTitulos, prev?.nTitulos, '')}</div>
       <div class="res-num"><b>${horas(d.min)}</b><span>delante de la pantalla</span>${prev ? delta(Math.round(d.min / 60), Math.round(prev.min / 60), ' h') : ''}</div>
       <div class="res-num"><b>${d.libros.length}</b><span>${d.libros.length === 1 ? 'libro leído' : 'libros leídos'}</span>${delta(d.libros.length, prev?.libros.length, '')}</div>
       <div class="res-num"><b>${d.pags.toLocaleString('es-ES')}</b><span>páginas</span>${delta(d.pags, prev?.pags, '')}</div>
@@ -601,13 +1040,14 @@ function pintarResumen() {
     h += `<section class="res-t"><h3>En pantalla</h3>
       <div class="res-tipos">
         <div><b>${d.pelis.length}</b><span><i style="background:var(--peli)"></i>Películas</span></div>
-        <div><b>${d.series.length}</b><span><i style="background:var(--serie)"></i>Series</span></div>
-        <div><b>${d.animes.length}</b><span><i style="background:var(--anime)"></i>Anime</span></div>
+        <div><b>${d.nSeries}</b><span><i style="background:var(--serie)"></i>Series</span></div>
+        <div><b>${d.nAnimes}</b><span><i style="background:var(--anime)"></i>Anime</span></div>
       </div>
       ${d.caps ? dato('Capítulos vistos', d.caps.toLocaleString('es-ES')) : ''}
-      ${d.masLarga && minutos(d.masLarga) ? dato('La serie más larga', `${esc(d.masLarga.titulo)} · ${horas(minutos(d.masLarga))}`) : ''}
+      ${d.masLarga?.min ? dato('La serie más larga', `${esc(d.masLarga.titulo)} · ${horas(d.masLarga.min)}`) : ''}
+      ${d.revisionados ? dato('Revisionados', d.revisionados) : ''}
       ${d.peliLarga?.duracion ? dato('La película más larga', `${esc(d.peliLarga.titulo)} · ${d.peliLarga.duracion} min`) : ''}
-      ${dato('Recomendarías', `${d.rec.length} de ${d.pant.length}`)}
+      ${dato('Recomendarías', `${d.rec.length} de ${d.nTitulos}`)}
       ${d.generos.length ? `<p class="res-sub">Tus géneros</p>${barras(d.generos)}` : ''}
       ${d.plataformas.length ? `<p class="res-sub">Dónde has visto más</p>${barras(d.plataformas)}` : ''}
       ${d.rec.length ? `<p class="res-sub">Lo que recomiendas</p><div class="res-chips">${d.rec.slice(0, 8).map(i => `<span>👍 ${esc(i.titulo)}</span>`).join('')}${d.rec.length > 8 ? `<span>y ${d.rec.length - 8} más</span>` : ''}</div>` : ''}
@@ -619,7 +1059,10 @@ function pintarResumen() {
       ${d.gordo?.paginas ? dato('El más largo', `${esc(d.gordo.titulo)} · ${d.gordo.paginas.toLocaleString('es-ES')} págs.`) : ''}
       ${d.autor ? dato('Autor del año', `${esc(d.autor[0])} · ${d.autor[1]} libros`) : d.nAutores > 1 ? dato('Autores distintos', d.nAutores) : ''}
       ${dato('Kindle / papel', `${d.kindle} / ${d.papel}`)}
+      ${d.relecturas ? dato('Relecturas', d.relecturas) : ''}
+      ${dato('Recomendarías', `${d.recLibros.length} de ${d.libros.length}`)}
       ${d.nPrecio ? dato('Gastado en libros', `${euros(Math.round(d.gasto * 100) / 100)}${d.nPrecio < d.libros.length ? ` <small>(${d.nPrecio} con precio)</small>` : ''}`) : ''}
+      ${d.recLibros.length ? `<p class="res-sub">Libros que recomiendas</p><div class="res-chips">${d.recLibros.slice(0, 8).map(i => `<span>👍 ${esc(i.titulo)}</span>`).join('')}${d.recLibros.length > 8 ? `<span>y ${d.recLibros.length - 8} más</span>` : ''}</div>` : ''}
     </section>`;
   }
   const pv = pendientes().filter(i => i.tipo !== 'libro').length, pl = pendientes().filter(i => i.tipo === 'libro').length;
@@ -653,7 +1096,7 @@ async function imagenResumen() {
   c.fillStyle = INK2; c.font = `600 40px ${F}`; c.fillText('Mi Butaca', P + 150, 160);
   c.fillStyle = INK2; c.font = `500 34px ${F}`; c.fillText(anioRes === ANIO_ACTUAL ? 'En lo que va de año' : 'Resumen del año', P + 150, 210);
   c.fillStyle = INK; c.font = `800 190px ${F}`; c.fillText(`Mi ${anioRes}`, P - 8, 450);
-  const nums = [[d.pant.length, 'títulos vistos'], [horas(d.min), 'de pantalla'], [d.libros.length, d.libros.length === 1 ? 'libro leído' : 'libros leídos'], [d.pags.toLocaleString('es-ES'), 'páginas']];
+  const nums = [[d.nTitulos, 'títulos vistos'], [horas(d.min), 'de pantalla'], [d.libros.length, d.libros.length === 1 ? 'libro leído' : 'libros leídos'], [d.pags.toLocaleString('es-ES'), 'páginas']];
   const bw = (W - 2 * P - 30) / 2;
   nums.forEach(([v, k], n) => {
     const x = P + (n % 2) * (bw + 30), y = 530 + Math.floor(n / 2) * 250;
@@ -676,8 +1119,8 @@ async function imagenResumen() {
     }
     y += 50;
   };
-  const extra = [d.autor ? `Autor del año: ${d.autor[0]}` : '', d.masLarga && minutos(d.masLarga) ? `Serie más larga: ${d.masLarga.titulo}` : '',
-    d.gordo?.paginas ? `Libro más largo: ${d.gordo.titulo}` : '', d.rec.length ? `Recomendarías ${d.rec.length} de ${d.pant.length}` : ''].filter(Boolean);
+  const extra = [d.autor ? `Autor del año: ${d.autor[0]}` : '', d.masLarga?.min ? `Serie más larga: ${d.masLarga.titulo}` : '',
+    d.gordo?.paginas ? `Libro más largo: ${d.gordo.titulo}` : '', d.rec.length ? `Recomendarías ${d.rec.length} de ${d.nTitulos}` : ''].filter(Boolean);
   lista('Tus géneros', d.generos, 3);
   lista('Dónde has visto más', d.plataformas, extra.length ? 2 : 3);
   c.font = `500 38px ${F}`;
@@ -708,8 +1151,10 @@ function vacio(hayAlgo, titulo, texto) {
 function pintarTodo() {
   pintarVistas(); pintarLeidos(); pintarPorVer(); pintarPorLeer(); pintarSegmentos();
   if ($('#resumen').open) pintarResumen();
+  if ($('#calendario').open) pintarCalendario();
+  pintarDlTitulos();
   const n = (l, libro) => l.filter(i => (i.tipo === 'libro') === libro).length || '';
-  $('#nVistas').textContent = n(terminados(), false); $('#nPorVer').textContent = n(pendientes(), false);
+  $('#nVistas').textContent = obras(terminados().filter(i => i.tipo !== 'libro')).length || ''; $('#nPorVer').textContent = n(pendientes(), false);
   $('#nLeidos').textContent = n(terminados(), true); $('#nPorLeer').textContent = n(pendientes(), true);
   $('#dlAutores').innerHTML = [...new Set(visibles().filter(i => i.autor).map(i => i.autor))].map(a => `<option value="${esc(a)}">`).join('');
   pintarEstado();
@@ -719,22 +1164,30 @@ function pintarTodo() {
 const dlg = $('#ajustes'), fa = $('#formAjustes');
 $('#btnSync').addEventListener('click', () => {
   fa.owner.value = cfg?.owner || ''; fa.repo.value = cfg?.repo || 'mi-butaca-datos';
-  fa.token.value = cfg?.token || ''; fa.nombre.value = cfg?.nombre || '';
+  fa.token.value = cfg?.token || ''; fa.nombre.value = cfg?.nombre || ''; fa.caduca.value = cfg?.caduca || '';
+  $('#avisoExport').checked = !!leerLS(LS_AVISO_EXPORT, false);
+  const nSin = sinPortada().length;
+  $('#btnCompletar').textContent = nSin ? `🖼️ Buscar portadas que faltan (${nSin})` : '🖼️ Portadas: todo completo';
+  $('#btnCompletar').disabled = !nSin;
   const est = $('#estadoConexion');
   est.className = 'estado' + (ultimoError ? ' err' : cfg ? ' ok' : '');
-  est.textContent = ultimoError || (cfg ? `Conectado a ${cfg.owner}/${cfg.repo}` : 'Sin conectar: los datos solo están en este móvil.');
+  est.textContent = ultimoError || (cfg ? `Conectado a ${cfg.owner}/${cfg.repo} · ${$('#syncTxt').textContent}` : 'Sin conectar: los datos solo están en este móvil.');
   $('#btnDesconectar').disabled = !cfg;
   dlg.showModal();
 });
 $('#btnCerrar').addEventListener('click', () => dlg.close());
 $('#btnConectar').addEventListener('click', async () => {
   const nuevo = { owner: fa.owner.value.trim(), repo: fa.repo.value.trim(), token: fa.token.value.trim(), nombre: fa.nombre.value.trim() };
+  if (fa.caduca.value) nuevo.caduca = fa.caduca.value;
   const est = $('#estadoConexion');
   if (!nuevo.owner || !nuevo.repo || !nuevo.token) { est.className = 'estado err'; est.textContent = 'Rellena usuario, repositorio y token.'; return; }
+  // Un token copiado con un espacio raro o un carácter de más daría un error incomprensible del navegador
+  if (/[^\x21-\x7e]/.test(nuevo.token)) { est.className = 'estado err'; est.textContent = 'El token tiene espacios o caracteres que no son suyos. Vuelve a copiarlo de GitHub y pégalo de nuevo.'; return; }
   est.className = 'estado'; est.textContent = 'Comprobando…';
   try {
     await bajar(nuevo);
-    cfg = nuevo; escribirLS(LS.cfg, cfg); ultimoError = null;
+    cfg = nuevo; escribirLS(LS.cfg, cfg); ultimoError = null; tokenMalo = false;
+    try { localStorage.removeItem(LS_TOKEN_LUEGO); } catch { /* */ }
     if (visibles().length) sucio = true; // lo que había en el móvil se suma al repositorio
     guardarLocal(); await sincronizar();
     if (ultimoError) { est.className = 'estado err'; est.textContent = ultimoError; return; }
@@ -747,6 +1200,183 @@ $('#btnDesconectar').addEventListener('click', () => {
   cfg = null; ultimoError = null; try { localStorage.removeItem(LS.cfg); } catch { /* */ }
   sha = null; sucio = false; guardarLocal(); pintarEstado(); dlg.close();
 });
+/* ---------------- exportar a Excel (CSV) ---------------- */
+const COLUMNAS = [
+  ['Estado', i => (esPend(i) ? 'Pendiente' : 'Terminado')], ['Tipo', i => NOMBRE_TIPO[i.tipo]], ['Título', i => i.titulo],
+  ['Año', i => (esPend(i) ? '' : anioDe(i))], ['Temporada', i => textoTemporadas(i)], ['Capítulos', i => i.capitulos],
+  ['Min. por capítulo', i => i.duracionCap], ['Duración (min)', i => i.duracion],
+  ['Minutos totales', i => (esPend(i) || i.tipo === 'libro' ? '' : minutos(i))], ['Género', i => i.genero],
+  ['Dónde', i => (i.tipo === 'libro' ? '' : donde(i))], ['Autor', i => i.autor], ['Formato', i => (esPend(i) ? '' : i.formato)],
+  ['Páginas', i => i.paginas], ['Precio (€)', i => (i.precio != null ? String(i.precio).replace('.', ',') : '')],
+  ['Fecha', i => i.fechaFin || i.fechaVisto], ['Recomendado', i => (i.recomienda ? 'Sí' : '')], ['Por qué', i => i.porque],
+  ['Revisionado / relectura', i => (i.revisionado ? 'Sí' : '')], ['Estreno', i => i.estreno], ['Nota', i => i.nota],
+  ['Muchas ganas', i => (i.ganas ? 'Sí' : '')], ['ISBN', i => i.isbn], ['Portada', i => i.portada], ['Añadido', i => (i.creado || '').slice(0, 10)],
+];
+/** CSV con «;» y BOM UTF-8: Excel en español lo abre directamente en columnas y con acentos. */
+function textoCSV() {
+  const celda = v => { const t = v == null ? '' : String(v); return /[";\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const filas = [...terminados().sort((a, b) => anioDe(b) - anioDe(a) || (a.tipo === 'libro') - (b.tipo === 'libro') || a.titulo.localeCompare(b.titulo, 'es')),
+    ...pendientes().sort((a, b) => a.titulo.localeCompare(b.titulo, 'es'))];
+  return '﻿' + [COLUMNAS.map(c => c[0]), ...filas.map(i => COLUMNAS.map(c => c[1](i)))].map(f => f.map(celda).join(';')).join('\r\n') + '\r\n';
+}
+const LS_ESTRENOS_CERRADOS = 'mb_estrenos_cerrados';
+const ICONO_TIPO = { pelicula: '🎬', serie: '📺', anime: '🍥', libro: '📖' };
+/** Texto del aviso de estreno. Una serie «continúa» si es la temporada 2 o posterior, o si ya viste alguna temporada. */
+function textoEstreno(i) {
+  const t = `«${i.titulo}»`;
+  if (i.tipo === 'libro') return `Publicación del libro ${t}`;
+  if (i.tipo === 'pelicula') return `Estreno de la película ${t}`;
+  const continua = (i.temporada != null && i.temporada > 1)
+    || terminados().some(x => x.tipo === i.tipo && normal(x.titulo) === normal(i.titulo));
+  return continua ? `Nueva temporada de ${t}` : `Estreno ${i.tipo === 'anime' ? 'del anime' : 'de la serie'} ${t}`;
+}
+const detalleEstreno = i => [i.tipo === 'libro' ? i.autor : '', i.temporada != null && i.tipo !== 'pelicula' && i.tipo !== 'libro'
+  ? (i.temporadaFin ? `Temporadas ${i.temporada}–${i.temporadaFin}` : `Temporada ${i.temporada}`) : '', i.tipo === 'libro' ? '' : donde(i)].filter(Boolean).join(' · ');
+/** Pendientes que se estrenan hoy y no has cerrado. */
+function estrenosDeHoy() {
+  const hoy = hoyISO(), cerrados = leerLS(LS_ESTRENOS_CERRADOS, {});
+  return pendientes().filter(i => i.estreno === hoy && cerrados[i.id] !== hoy).sort((a, b) => a.titulo.localeCompare(b.titulo, 'es'));
+}
+function cerrarEstrenos(ids) {
+  const hoy = hoyISO(), c = leerLS(LS_ESTRENOS_CERRADOS, {}), limpio = {};
+  for (const [k, v] of Object.entries(c)) if (v === hoy) limpio[k] = v; // lo de otros días ya no hace falta
+  for (const id of ids) limpio[id] = hoy;
+  escribirLS(LS_ESTRENOS_CERRADOS, limpio); pintarAvisos();
+}
+const LS_EXPORT = a => `mb_export_${a}`, LS_TOKEN_LUEGO = 'mb_token_luego', LS_AVISO_EXPORT = 'mb_aviso_export';
+function exportarCSV() {
+  const blob = new Blob([textoCSV()], { type: 'text/csv;charset=utf-8' });
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `mi-butaca-${hoyISO()}.csv` });
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  escribirLS(LS_EXPORT(new Date().getFullYear()), hoyISO());
+  avisar('Copia descargada (ábrela con Excel)'); pintarAvisos();
+}
+$('#btnCSV').addEventListener('click', exportarCSV);
+// El recordatorio anual está desactivado hasta que lo actives en Ajustes
+$('#avisoExport').addEventListener('change', e => {
+  escribirLS(LS_AVISO_EXPORT, e.target.checked); pintarAvisos();
+  avisar(e.target.checked ? 'Te avisaré del 1 al 7 de enero' : 'Recordatorio anual desactivado');
+});
+
+/* ---------------- avisos: copia de principio de año y caducidad del token ---------------- */
+function diasToken() {
+  if (!cfg?.caduca) return null;
+  const [y, m, d] = cfg.caduca.split('-').map(Number), hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  return Math.round((new Date(y, m - 1, d) - hoy) / 86400000);
+}
+function pintarAvisos() {
+  const el = $('#avisos'); if (!el) return;
+  const h = [], hoy = new Date(), Y = hoy.getFullYear();
+  if (cfg) {
+    const dias = diasToken();
+    if (tokenMalo || (dias != null && dias < 0)) {
+      h.push(`<div class="aviso grave" data-aviso="token"><p>🔑 <b>Tu token de GitHub ha caducado o ya no es válido.</b> Lo que añadas se queda en el móvil y no se guarda en GitHub hasta que lo renueves.</p>
+        <div class="acciones"><button class="prim" data-acc="ayuda">Cómo renovarlo</button></div></div>`);
+    } else if (dias != null && dias <= 7 && leerLS(LS_TOKEN_LUEGO, '') !== hoyISO()) {
+      const cuando = dias === 0 ? 'hoy' : dias === 1 ? 'mañana' : `en ${dias} días`;
+      h.push(`<div class="aviso" data-aviso="token"><p>🔑 Tu token de GitHub <b>caduca ${cuando}</b>. Renuévalo para que la app siga guardando en GitHub.</p>
+        <div class="acciones"><button class="prim" data-acc="ayuda">Cómo renovarlo</button><button data-acc="luego">Más tarde</button></div></div>`);
+    }
+  }
+  const est = estrenosDeHoy();
+  if (est.length === 1) {
+    const i = est[0], det = detalleEstreno(i);
+    h.push(`<div class="aviso estreno" data-aviso="estreno"><button type="button" class="cerrar" data-cerrar="${esc(i.id)}" aria-label="Cerrar aviso">✕</button>
+      <p class="tit">${ICONO_TIPO[i.tipo]} <b>Hoy: ${esc(textoEstreno(i))}</b>${det ? `<small>${esc(det)}</small>` : ''}</p>
+      <div class="acciones"><button data-acc="cal">Ver en el calendario</button></div></div>`);
+  } else if (est.length > 1) {
+    h.push(`<div class="aviso estreno" data-aviso="estreno"><button type="button" class="cerrar" data-cerrar="*" aria-label="Cerrar todos">✕</button>
+      <p class="tit">🗓️ <b>Hoy hay ${est.length} estrenos de tu lista</b></p>
+      <ul class="estrenos">${est.map(i => { const det = detalleEstreno(i); return `<li><span>${ICONO_TIPO[i.tipo]} ${esc(textoEstreno(i))}${det ? `<small>${esc(det)}</small>` : ''}</span>
+        <button type="button" class="cerrar-uno" data-cerrar="${esc(i.id)}" aria-label="Cerrar este aviso">✕</button></li>`; }).join('')}</ul>
+      <div class="acciones"><button data-acc="cal">Ver en el calendario</button></div></div>`);
+  }
+  if (leerLS(LS_AVISO_EXPORT, false) && hoy.getMonth() === 0 && hoy.getDate() <= 7 && visibles().length && !leerLS(LS_EXPORT(Y), '')) {
+    h.push(`<div class="aviso info" data-aviso="export"><p>📦 <b>¡Feliz ${Y}!</b> Es buen momento para descargar una copia de tu historial en Excel y guardarla.</p>
+      <div class="acciones"><button class="prim" data-acc="csv">Descargar Excel</button><button data-acc="hecho">Ya la tengo</button></div></div>`);
+  }
+  el.innerHTML = h.join('');
+}
+$('#avisos').addEventListener('click', e => {
+  const cerrar = e.target.closest('[data-cerrar]')?.dataset.cerrar;
+  if (cerrar) { cerrarEstrenos(cerrar === '*' ? estrenosDeHoy().map(i => i.id) : [cerrar]); return; }
+  const acc = e.target.closest('[data-acc]')?.dataset.acc; if (!acc) return;
+  if (acc === 'ayuda') $('#ayudaToken').showModal();
+  if (acc === 'cal') abrirCalendario();
+  if (acc === 'luego') { escribirLS(LS_TOKEN_LUEGO, hoyISO()); pintarAvisos(); }
+  if (acc === 'csv') exportarCSV();
+  if (acc === 'hecho') { escribirLS(LS_EXPORT(new Date().getFullYear()), hoyISO()); pintarAvisos(); }
+});
+$('#ayudaCerrar').addEventListener('click', () => $('#ayudaToken').close());
+$('#ayudaPegar').addEventListener('click', () => {
+  $('#ayudaToken').close(); $('#btnSync').click();
+  fa.token.value = ''; fa.caduca.value = ''; fa.token.focus();
+});
+
+/* ---------------- calendario de estrenos ---------------- */
+let calMes = null, calDia = null;
+const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function abrirCalendario() {
+  const h = new Date(); calMes = new Date(h.getFullYear(), h.getMonth(), 1); calDia = null;
+  pintarCalendario(); $('#calendario').showModal(); $('#calendario .res-scroll').scrollTop = 0;
+}
+function filaCal(i, texto) {
+  return `<li><button class="item" data-id="${esc(i.id)}">${marcaDe(i)}<span class="cuerpo">
+    <span class="t"><em>${esc(i.titulo)}</em>${i.ganas ? '<span class="ganas">⭐</span>' : ''}</span>
+    <span class="m">${metaPend(i).map(esc).join(' · ') || NOMBRE_TIPO[i.tipo]}</span></span><span class="d">${texto}</span></button></li>`;
+}
+function pintarCalendario() {
+  const conFecha = pendientes().filter(i => i.estreno), hoy = hoyISO();
+  const y = calMes.getFullYear(), m = calMes.getMonth(), prefijo = iso(calMes).slice(0, 7);
+  const mesTxt = calMes.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+  $('#calMes').textContent = mesTxt.charAt(0).toUpperCase() + mesTxt.slice(1);
+  const porDia = new Map();
+  for (const i of conFecha) if (i.estreno.startsWith(prefijo)) { const d = i.estreno; if (!porDia.has(d)) porDia.set(d, []); porDia.get(d).push(i); }
+  const hueco = (new Date(y, m, 1).getDay() + 6) % 7, nDias = new Date(y, m + 1, 0).getDate();
+  let g = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(d => `<span class="sem">${d}</span>`).join('') + '<span class="cal-dia vacio"></span>'.repeat(hueco);
+  for (let d = 1; d <= nDias; d++) {
+    const f = iso(new Date(y, m, d)), l = porDia.get(f) || [];
+    const cls = ['cal-dia', f === hoy ? 'hoy' : '', f < hoy ? 'pasado' : '', f === calDia ? 'sel' : ''].filter(Boolean).join(' ');
+    const etiqueta = `${d}${l.length ? ` · ${l.length} ${l.length === 1 ? 'estreno' : 'estrenos'}` : ''}`;
+    g += `<button type="button" class="${cls}" data-dia="${f}" aria-label="${etiqueta}"${l.length ? '' : ' tabindex="-1"'}>${d}<span class="puntos">${l.slice(0, 3).map(i => `<i class="${i.tipo}"></i>`).join('')}</span></button>`;
+  }
+  $('#calGrid').innerHTML = g;
+
+  let h = '';
+  if (!conFecha.length) {
+    h = `<div class="cal-vacio"><b>Aún no hay estrenos apuntados</b>Al añadir algo pendiente, pon su fecha de estreno o publicación y aparecerá aquí.
+      <br><button type="button" class="principal" id="calApuntar">Apuntar un estreno</button></div>`;
+  } else {
+    const esteMes = prefijo === hoy.slice(0, 7);
+    // Lo de este mes ya sale en su lista (como «Disponible»): aquí solo lo estrenado antes y aún pendiente
+    const disponibles = conFecha.filter(i => i.estreno < `${prefijo}-01`).sort((a, b) => b.estreno.localeCompare(a.estreno));
+    if (esteMes && disponibles.length && !calDia) h += `<p class="cal-sec">Ya disponibles</p><ul class="lista">${disponibles.map(i => filaCal(i, fechaCorta(i.estreno))).join('')}</ul>`;
+    const delMes = conFecha.filter(i => calDia ? i.estreno === calDia : i.estreno.startsWith(prefijo)).sort((a, b) => a.estreno.localeCompare(b.estreno));
+    const titulo = calDia ? new Date(calDia + 'T12:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })
+      : `Estrenos de ${calMes.toLocaleDateString('es-ES', { month: 'long' })}`;
+    if (delMes.length) {
+      h += `<p class="cal-sec">${esc(titulo)}</p><ul class="lista">${delMes.map(i => filaCal(i, i.estreno <= hoy ? 'Disponible' : fechaCorta(i.estreno))).join('')}</ul>`;
+    } else {
+      const sig = conFecha.filter(i => i.estreno > iso(new Date(y, m + 1, 0))).sort((a, b) => a.estreno.localeCompare(b.estreno))[0];
+      h += `<div class="cal-vacio"><b>${calDia ? 'Nada ese día' : 'Nada este mes'}</b>${sig ? `Próximo: «${esc(sig.titulo)}», ${fechaCorta(sig.estreno)}.<br><button type="button" class="chip" data-ir="${sig.estreno.slice(0, 7)}">Ir a ese mes</button>` : ''}</div>`;
+    }
+  }
+  $('#calLista').innerHTML = h;
+}
+$('#btnCalendario').addEventListener('click', abrirCalendario);
+$('#calCerrar').addEventListener('click', () => $('#calendario').close());
+$('#calPrev').addEventListener('click', () => { calMes = new Date(calMes.getFullYear(), calMes.getMonth() - 1, 1); calDia = null; pintarCalendario(); });
+$('#calNext').addEventListener('click', () => { calMes = new Date(calMes.getFullYear(), calMes.getMonth() + 1, 1); calDia = null; pintarCalendario(); });
+$('#calHoy').addEventListener('click', () => { const h = new Date(); calMes = new Date(h.getFullYear(), h.getMonth(), 1); calDia = null; pintarCalendario(); });
+$('#calendario').addEventListener('click', e => {
+  const dia = e.target.closest('[data-dia]');
+  if (dia) { calDia = calDia === dia.dataset.dia ? null : dia.dataset.dia; pintarCalendario(); return; }
+  const ir = e.target.closest('[data-ir]');
+  if (ir) { const [a, mm] = ir.dataset.ir.split('-').map(Number); calMes = new Date(a, mm - 1, 1); calDia = null; pintarCalendario(); return; }
+  if (e.target.closest('#calApuntar')) { $('#calendario').close(); if (editandoId) salirEdicion(); irA('anadir'); ponerModo('pendiente'); form.titulo.focus(); return; }
+  if (e.target.closest('.item')) $('#calendario').close(); // el editor se abre con el clic general de .item
+});
+
 $('#btnExportar').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify({ version: 1, items: ordenar(items) }, null, 1)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `mi-butaca-${hoyISO()}.json` });
@@ -761,4 +1391,19 @@ addEventListener('offline', () => pintarEstado());
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sincronizar(); });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
+/* «↻ Recalcular»: trae lo último de GitHub, sube lo pendiente y recalcula todos los totales. */
+async function recalcular() {
+  const botones = $$('[data-recalc]');
+  botones.forEach(b => { b.disabled = true; if (b.classList.contains('icono')) b.classList.add('girando'); else b.textContent = '↻ Recalculando…'; });
+  items.forEach(normalizar); guardarLocal();
+  const enLinea = cfg && navigator.onLine;
+  if (enLinea) await sincronizar();
+  pintarTodo();
+  botones.forEach(b => { b.disabled = false; b.classList.remove('girando'); if (!b.classList.contains('icono')) b.textContent = '↻ Recalcular'; });
+  avisar(!cfg ? 'Totales recalculados' : !navigator.onLine ? 'Sin conexión: recalculado con los datos del móvil'
+    : ultimoError ? 'No se pudo sincronizar: recalculado con los datos del móvil' : 'Datos al día y totales recalculados');
+}
+$$('[data-recalc]').forEach(b => b.addEventListener('click', recalcular));
+
+items.forEach(normalizar);
 ponerTipo('pelicula'); ponerModo('hecho'); limpiarForm(); pintarTodo(); sincronizar();

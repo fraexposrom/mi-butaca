@@ -220,4 +220,123 @@ dialog.pantalla[open]{display:flex;flex-direction:column}
 .res-chips span{background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:13px}
 .res-vacio{text-align:center;color:var(--ink2);padding:48px 16px}
 .res-vacio b{display:block;color:var(--ink);font-size:17px;margin-bottom:4px}
+.recalc-fila{display:flex;justify-content:flex-end;margin:-4px 0 8px}
+.recalc{border:0;background:none;color:var(--ink2);font-size:13px;font-weight:600;padding:4px 2px}
+.recalc:disabled,[data-recalc]:disabled{opacity:.5}
+.res-acc{display:flex;gap:8px}
+[data-recalc].girando{animation:giro .8s linear infinite}
+@keyframes giro{to{transform:rotate(360deg)}}
 .enlace{border:0;background:none;color:var(--ink2);font-size:14px;padding:4px;text-decoration:underline}
+
+/* ---------- cabecera compacta ---------- */
+.sync-ico{position:relative;color:var(--ink2)}
+.sync-ico .dot{position:absolute;top:3px;right:3px;width:11px;height:11px;border:2px solid var(--bg)}
+.oculto-v{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.top-der{max-width:none}
+
+/* ---------- avisos ---------- */
+#avisos{display:flex;flex-direction:column;gap:8px}
+#avisos:not(:empty){margin:4px 0 12px}
+.aviso{background:var(--card2);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:14px;padding:12px 14px;font-size:14px;line-height:1.4}
+.aviso.grave{border-left-color:var(--err)}
+.aviso.info{border-left-color:var(--acc)}
+.aviso p{margin:0 0 10px}
+.aviso .acciones{display:flex;gap:8px;flex-wrap:wrap}
+.aviso .acciones button{border:0;border-radius:10px;padding:8px 12px;font-weight:600;font-size:14px;background:var(--soft);color:var(--ink)}
+.aviso .acciones button.prim{background:var(--acc);color:var(--acc-ink)}
+
+/* ---------- duplicados / autocompletar ---------- */
+.aviso-dup{background:var(--card2);border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.4;margin-top:-4px}
+.aviso-dup.suave{border-left-color:var(--acc)}
+.aviso-dup button{display:inline-block;margin-top:8px;border:0;border-radius:10px;padding:7px 12px;font-weight:600;font-size:14px;background:var(--soft);color:var(--ink)}
+.auto-hint{margin:-6px 2px 0;font-size:13px;color:var(--ok)}
+.auto-hint.oferta{color:var(--ink2)}
+.auto-hint button{margin-left:6px;border:0;border-radius:10px;padding:6px 10px;font-weight:600;font-size:13px;background:var(--soft);color:var(--ink)}
+.f textarea{width:100%;border:1.5px solid var(--line);background:var(--card);border-radius:12px;padding:12px 14px;font:inherit;font-size:16px;color:var(--ink);outline:none;resize:vertical;min-height:64px}
+.f textarea:focus{border-color:var(--acc)}
+.check small{font-weight:500;color:var(--ink2)}
+.item .flag{color:var(--ink2);font-size:12px;font-weight:600;border:1px solid var(--line);border-radius:999px;padding:1px 7px;margin-left:2px;flex:none}
+.sec.ancho{width:100%}
+
+/* ---------- listas largas ---------- */
+.ver-mas{width:100%;margin:12px 0 4px;border:1.5px solid var(--line);background:var(--card);color:var(--ink);border-radius:14px;padding:12px;font-weight:600}
+
+/* ---------- calendario ---------- */
+.cal-nav{display:flex;align-items:center;justify-content:space-between;margin:4px 0 10px}
+.cal-nav b{font-size:18px}
+.cal-nav .icono{font-size:22px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-grid .sem{text-align:center;font-size:12px;font-weight:700;color:var(--ink2);padding:4px 0}
+.cal-dia{aspect-ratio:1;border:0;border-radius:10px;background:var(--card);color:var(--ink);font-size:15px;font-variant-numeric:tabular-nums;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0;position:relative}
+.cal-dia.vacio{background:transparent}
+.cal-dia.pasado{color:var(--ink2)}
+.cal-dia.hoy{box-shadow:inset 0 0 0 1.5px var(--ink2)}
+.cal-dia.sel{box-shadow:inset 0 0 0 2px var(--acc);background:var(--soft)}
+.cal-dia .puntos{display:flex;gap:3px;height:6px}
+.cal-dia .puntos i{width:6px;height:6px;border-radius:50%}
+.cal-dia .puntos i.pelicula{background:var(--peli)} .cal-dia .puntos i.serie{background:var(--serie)}
+.cal-dia .puntos i.anime{background:var(--anime)} .cal-dia .puntos i.libro{background:var(--libro)}
+.cal-pie{display:flex;justify-content:center;margin:10px 0 2px}
+.cal-sec{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);margin:18px 4px 8px}
+.cal-vacio{text-align:center;color:var(--ink2);padding:22px 12px;font-size:14px}
+.cal-vacio b{display:block;color:var(--ink);font-size:16px;margin-bottom:4px}
+.cal-vacio button{margin-top:12px}
+
+/* ---------- ayuda token ---------- */
+#ayudaToken .ayuda{padding:20px;display:flex;flex-direction:column;gap:12px}
+#ayudaToken h2{margin:0;font-size:20px}
+#ayudaToken ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:10px;font-size:15px;line-height:1.45}
+#ayudaToken code{font-size:13px}
+
+/* ---------- avisos de estreno ---------- */
+.aviso{position:relative}
+.aviso.estreno{border-left-color:var(--acc);padding-right:44px}
+.aviso .tit b{color:var(--ink)}
+.aviso .tit small{display:block;color:var(--ink2);font-size:13px;margin-top:2px}
+.aviso .cerrar{position:absolute;top:8px;right:8px;width:30px;height:30px;border:0;border-radius:50%;background:var(--chip);color:var(--ink2);font-size:14px;display:grid;place-items:center}
+.estrenos{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:6px}
+.estrenos li{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--bg);border-radius:10px;padding:8px 6px 8px 10px}
+.estrenos li small{display:block;color:var(--ink2);font-size:12px}
+.estrenos .cerrar-uno{flex:none;width:28px;height:28px;border:0;border-radius:50%;background:var(--chip);color:var(--ink2);font-size:13px}
+
+/* ---------- portadas y búsqueda de datos ---------- */
+.buscar-datos{border:1.5px dashed var(--acc);background:var(--soft);color:var(--ink);border-radius:12px;padding:11px;font-weight:600;font-size:15px;margin-top:-4px}
+.portada-form{display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px}
+.portada-form img{width:64px;height:92px;object-fit:cover;border-radius:8px;background:var(--chip);flex:none}
+.portada-form div{display:flex;flex-direction:column;gap:4px;align-items:flex-start;min-width:0}
+.portada-form small{color:var(--ink2);font-size:13px}
+.portada-form button{border:0;background:none;color:var(--ink2);text-decoration:underline;font-size:13px;padding:2px 0}
+.portada-mini{width:42px;height:60px;border-radius:7px;overflow:hidden;flex:none;background:var(--chip);align-self:center}
+.portada-mini img{width:100%;height:100%;object-fit:cover;display:block}
+.item:has(.portada-mini){padding:9px 14px 9px 9px}
+.bus-barra{display:flex;gap:8px;padding:0 16px 8px}
+.bus-barra input{flex:1;min-width:0;border:1.5px solid var(--line);background:var(--card);border-radius:12px;padding:11px 14px;font-size:16px;color:var(--ink);outline:none}
+.bus-barra input:focus{border-color:var(--acc)}
+.bus-barra .principal{padding:11px 16px;font-size:15px}
+.bus-estado{color:var(--ink2);font-size:14px;text-align:center;margin:10px 0}
+.bus-estado:empty{display:none}
+.bus-res{display:flex;gap:12px;align-items:center;width:100%;text-align:left;border:0;background:var(--card);border-radius:14px;padding:10px;color:var(--ink)}
+.bus-res img,.bus-res .sin{width:52px;height:74px;border-radius:7px;object-fit:cover;flex:none;background:var(--chip)}
+.bus-res .sin{display:grid;place-items:center;font-size:22px}
+.bus-res b{display:block;font-size:15px;line-height:1.25}
+.bus-res i{display:block;font-style:normal;color:var(--ink2);font-size:12.5px;margin-top:1px}
+.bus-res small{display:block;color:var(--ink2);font-size:13px;margin-top:3px}
+.bus-fuente{margin:0;padding:8px 16px calc(10px + env(safe-area-inset-bottom));font-size:12px;color:var(--ink2);text-align:center;border-top:1px solid var(--line)}
+.sorteo-portada{width:120px;height:172px;object-fit:cover;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+
+/* ---------- completar portadas ---------- */
+.comp-prog{display:block;color:var(--ink2);font-size:13px;margin-top:2px}
+.comp-barra{height:4px;background:var(--chip);margin:0 16px 10px;border-radius:2px;overflow:hidden}
+.comp-barra div{height:100%;width:0;background:var(--acc);transition:width .3s}
+.comp-actual{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+.comp-actual .que{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
+.comp-actual h3{margin:4px 0 2px;font-size:20px;line-height:1.2}
+.comp-actual p{margin:0;color:var(--ink2);font-size:14px}
+.comp-actual.fin{text-align:center;padding:28px 16px}
+.comp-actual.fin h3{font-size:22px;margin-bottom:6px}
+.comp-actual.fin button{margin-top:16px;width:100%}
+.comp-form{padding:0 0 10px}
+.bus-res.prob{box-shadow:inset 0 0 0 2px var(--acc)}
+.bus-res .etq{display:inline-block;font-size:11px;font-weight:700;color:var(--acc-ink);background:var(--acc);border-radius:999px;padding:1px 8px;margin-bottom:4px}
+.comp-pie{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}

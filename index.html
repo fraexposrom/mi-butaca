@@ -22,17 +22,21 @@
     <h1 id="tituloSeccion">Añadir</h1>
   </div>
   <div class="top-der">
+  <button class="icono" id="btnCalendario" aria-label="Calendario de estrenos" title="Estrenos">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="15" r="1.8" fill="currentColor"/></svg>
+  </button>
   <button class="icono" id="btnResumen" aria-label="Tu año: resumen anual" title="Tu año">
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-6" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
   </button>
-  <button class="sync" id="btnSync" aria-label="Estado de sincronización y ajustes">
-    <span class="dot" id="syncDot"></span><span id="syncTxt">Solo en este móvil</span>
+  <button class="icono sync-ico" id="btnSync" aria-label="Sincronización y ajustes" title="Sincronización y ajustes">
+    <span class="dot" id="syncDot"></span><span id="syncTxt" class="oculto-v">Solo en este móvil</span>
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Zm7.43-2.53.04-.97-.04-.97 2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.3 7.3 0 0 0-1.68-.98l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.5.42l-.38 2.65c-.6.25-1.17.58-1.68.98l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64L4.57 11l-.04 1 .04.97-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.3.6.22l2.49-1c.51.4 1.08.73 1.68.98l.38 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.38-2.65c.6-.25 1.17-.58 1.68-.98l2.49 1c.22.08.47 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65Z"/></svg>
   </button>
   </div>
 </header>
 
 <main>
+  <div id="avisos"></div>
   <!-- ============ VISTAS ============ -->
   <section id="tab-vistas" class="tab" hidden>
     <div class="segmento" id="segV" role="tablist">
@@ -41,6 +45,7 @@
     </div>
     <div id="vHecho">
     <div class="stats" id="statsVistas"></div>
+    <div class="recalc-fila"><button type="button" class="recalc" data-recalc>↻ Recalcular</button></div>
     <input class="buscar" id="buscarVistas" type="search" placeholder="Buscar título, género, plataforma…" autocomplete="off">
     <div class="chips filtros" id="filtroVistas" role="tablist">
       <button class="chip on" data-f="todo">Todo</button>
@@ -83,9 +88,16 @@
       <div class="editando" id="avisoEdicion" hidden><span id="editPre">Editando</span> <b id="editTitulo"></b></div>
 
       <label class="f" data-para="pelicula serie anime"><span>Título</span>
-        <input name="titulo" required placeholder="Ej. Dune: Parte dos"></label>
+        <input name="titulo" required list="dlTitulos" placeholder="Ej. Dune: Parte dos"></label>
       <label class="f" data-para="libro"><span>Libro</span>
-        <input name="libro" required placeholder="Ej. La sombra del viento"></label>
+        <input name="libro" required list="dlTitulos" placeholder="Ej. La sombra del viento"></label>
+      <button type="button" class="buscar-datos" id="btnBuscarDatos" data-para="anime libro">🔎 Buscar portada y datos</button>
+      <div class="portada-form" id="portadaForm" hidden>
+        <img id="portadaImg" alt="">
+        <div><b>Portada</b><small id="portadaFuente"></small><button type="button" id="quitarPortada">Quitar portada</button></div>
+      </div>
+      <div class="aviso-dup" id="avisoDup" role="status" hidden></div>
+      <div class="auto-hint" id="autoHint" role="status" hidden></div>
       <label class="f" data-para="libro"><span>Autor</span>
         <input name="autor" list="dlAutores" placeholder="Ej. Carlos Ruiz Zafón"></label>
 
@@ -99,7 +111,7 @@
       </div>
 
       <div class="fila" data-para="serie anime">
-        <label class="f"><span>Temporada</span><input name="temporada" type="number" inputmode="numeric" min="0" placeholder="1"></label>
+        <label class="f"><span>Temporada <small>(o 1-4)</small></span><input name="temporada" type="text" autocomplete="off" placeholder="1 o 1-4"></label>
         <label class="f" data-solo="hecho"><span>Nº capítulos</span><input name="capitulos" type="number" inputmode="numeric" min="0" placeholder="10"></label>
       </div>
       <label class="f" data-para="serie anime" data-solo="hecho"><span>Duración por capítulo <small>(min)</small></span>
@@ -128,11 +140,21 @@
         <label class="f"><span>Lo acabé el</span><input name="fechaFin" type="date"></label>
       </div>
 
-      <label class="check" data-para="pelicula serie anime" data-solo="hecho">
+      <label class="check" data-solo="hecho">
+        <input type="checkbox" name="revisionado">
+        <span class="caja" aria-hidden="true"></span>
+        <span id="revEtq">Es un revisionado <small>(ya la había visto)</small></span>
+      </label>
+      <label class="check" data-solo="hecho">
         <input type="checkbox" name="recomienda">
         <span class="caja" aria-hidden="true"></span>
-        <span>La recomendaría</span>
+        <span id="recEtq">La recomendaría</span>
       </label>
+      <label class="f" data-solo="hecho" data-sirec="1"><span id="porqueEtq">¿Por qué la recomiendas? <small>(opcional)</small></span>
+        <textarea name="porque" rows="2" maxlength="280" placeholder="Un par de frases…"></textarea></label>
+
+      <label class="f" data-solo="pendiente"><span id="estrenoEtq">Fecha de estreno <small>(opcional)</small></span>
+        <input name="estreno" type="date"></label>
 
       <label class="f" data-solo="pendiente"><span>Nota <small>(opcional)</small></span>
         <input name="nota" placeholder="Ej. Me la recomendó Laura"></label>
@@ -160,6 +182,7 @@
     </div>
     <div id="lHecho">
     <div class="stats" id="statsLeidos"></div>
+    <div class="recalc-fila"><button type="button" class="recalc" data-recalc>↻ Recalcular</button></div>
     <input class="buscar" id="buscarLeidos" type="search" placeholder="Buscar libro o autor…" autocomplete="off">
     <div class="chips filtros anios" id="anioLeidos"></div>
     <div id="listaLeidos"></div>
@@ -190,6 +213,7 @@
     <label class="f"><span>Usuario de GitHub</span><input name="owner" autocapitalize="off" spellcheck="false" placeholder="tu-usuario"></label>
     <label class="f"><span>Repositorio de datos</span><input name="repo" autocapitalize="off" spellcheck="false" value="mi-butaca-datos"></label>
     <label class="f"><span>Token</span><input name="token" type="password" autocapitalize="off" spellcheck="false" placeholder="github_pat_…"></label>
+    <label class="f"><span>El token caduca el <small>(opcional: te avisaré una semana antes)</small></span><input name="caduca" type="date"></label>
     <label class="f"><span>Tu nombre</span><input name="nombre" placeholder="Fran"></label>
     <p class="estado" id="estadoConexion"></p>
     <div class="botones">
@@ -197,8 +221,16 @@
       <button type="button" class="sec" id="btnDesconectar">Desconectar</button>
     </div>
     <hr>
+    <p class="nota">Portadas y datos automáticos: anime de <b>AniList</b>; libros de <b>Google Books</b> y <b>Open Library</b>.</p>
+    <button type="button" class="sec ancho" id="btnCompletar">🖼️ Buscar portadas que faltan</button>
+    <button type="button" class="sec ancho" id="btnCSV">📊 Exportar a Excel (CSV)</button>
+    <label class="check">
+      <input type="checkbox" id="avisoExport">
+      <span class="caja" aria-hidden="true"></span>
+      <span>Recordarme cada año <small>(del 1 al 7 de enero)</small> que descargue la copia en Excel</span>
+    </label>
     <div class="botones">
-      <button type="button" class="sec" id="btnExportar">Descargar copia</button>
+      <button type="button" class="sec" id="btnExportar">Copia JSON</button>
       <button type="button" class="sec" id="btnCerrar">Cerrar</button>
     </div>
   </form>
@@ -207,13 +239,84 @@
 <dialog id="resumen" class="pantalla" aria-labelledby="resTitulo">
   <div class="res-cab">
     <h2 id="resTitulo">Tu año</h2>
-    <button type="button" class="icono" id="resCerrar" aria-label="Cerrar">✕</button>
+    <div class="res-acc"><button type="button" class="icono" data-recalc aria-label="Recalcular">↻</button>
+    <button type="button" class="icono" id="resCerrar" aria-label="Cerrar">✕</button></div>
   </div>
   <div class="res-scroll">
     <div class="chips filtros anios" id="resAnios"></div>
     <div id="resCuerpo"></div>
   </div>
   <div class="res-pie"><button type="button" class="principal" id="resImagen">Guardar como imagen</button></div>
+</dialog>
+
+<dialog id="calendario" class="pantalla" aria-labelledby="calTitulo">
+  <div class="res-cab">
+    <h2 id="calTitulo">Estrenos</h2>
+    <button type="button" class="icono" id="calCerrar" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="res-scroll">
+    <div class="cal-nav">
+      <button type="button" class="icono" id="calPrev" aria-label="Mes anterior">‹</button>
+      <b id="calMes"></b>
+      <button type="button" class="icono" id="calNext" aria-label="Mes siguiente">›</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div class="cal-pie"><button type="button" class="chip" id="calHoy">Hoy</button></div>
+    <div id="calLista"></div>
+  </div>
+</dialog>
+
+<dialog id="busqueda" class="pantalla" aria-labelledby="busTitulo">
+  <div class="res-cab">
+    <h2 id="busTitulo">Buscar</h2>
+    <button type="button" class="icono" id="busCerrar" aria-label="Cerrar">✕</button>
+  </div>
+  <form class="bus-barra" id="busForm">
+    <input id="busQ" type="search" autocomplete="off" placeholder="Título">
+    <button type="submit" class="principal">Buscar</button>
+  </form>
+  <div class="res-scroll">
+    <p class="bus-estado" id="busEstado"></p>
+    <ul class="lista" id="busLista"></ul>
+  </div>
+  <p class="bus-fuente" id="busFuente"></p>
+</dialog>
+
+<dialog id="completar" class="pantalla" aria-labelledby="compTitulo">
+  <div class="res-cab">
+    <div><h2 id="compTitulo">Completar portadas</h2><small class="comp-prog" id="compProgreso"></small></div>
+    <button type="button" class="icono" id="compCerrar" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="comp-barra"><div id="compBarra"></div></div>
+  <div class="res-scroll">
+    <div class="comp-actual" id="compActual"></div>
+    <form class="bus-barra comp-form" id="compForm">
+      <input id="compQ" type="search" autocomplete="off" aria-label="Buscar con otro texto">
+      <button type="submit" class="principal">Buscar</button>
+    </form>
+    <p class="bus-estado" id="compEstado"></p>
+    <ul class="lista" id="compLista"></ul>
+  </div>
+  <div class="comp-pie" id="compPie">
+    <button type="button" class="sec" id="compSaltar">Saltar</button>
+    <button type="button" class="sec" id="compNunca">No tiene portada</button>
+  </div>
+</dialog>
+
+<dialog id="ayudaToken">
+  <div class="ayuda">
+    <h2>Renovar el token de GitHub</h2>
+    <ol>
+      <li>En <b>github.com</b>, toca tu foto › <b>Settings</b> › <b>Developer settings</b> (abajo del todo) › <b>Personal access tokens</b> › <b>Fine-grained tokens</b>.</li>
+      <li>Toca el token de Mi Butaca › <b>Regenerate token</b>. Elige la nueva caducidad y confirma. Mantiene el repositorio y los permisos.</li>
+      <li>Copia el token nuevo (empieza por <code>github_pat_</code>). GitHub solo lo enseña una vez.</li>
+      <li>Vuelve aquí, toca <b>Pegar el token nuevo</b>, pégalo, pon la nueva fecha de caducidad y pulsa <b>Conectar</b>.</li>
+    </ol>
+    <div class="botones">
+      <button type="button" class="sec" id="ayudaCerrar">Cerrar</button>
+      <button type="button" class="principal" id="ayudaPegar">Pegar el token nuevo</button>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="sorteo">
@@ -232,6 +335,7 @@
 
 <datalist id="dlGeneros"></datalist>
 <datalist id="dlAutores"></datalist>
+<datalist id="dlTitulos"></datalist>
 
 <script src="app.js"></script>
 </body>
