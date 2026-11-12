@@ -91,7 +91,13 @@
         <input name="titulo" required list="dlTitulos" placeholder="Ej. Dune: Parte dos"></label>
       <label class="f" data-para="libro"><span>Libro</span>
         <input name="libro" required list="dlTitulos" placeholder="Ej. La sombra del viento"></label>
-      <button type="button" class="buscar-datos" id="btnBuscarDatos" data-para="anime libro">🔎 Buscar portada y datos</button>
+      <button type="button" class="buscar-datos" id="btnBuscarDatos">🔎 Buscar portada y datos</button>
+      <button type="button" class="enlace-img" id="btnEnlace">🔗 Usar una imagen de internet como portada</button>
+      <div class="enlace-box" id="enlaceBox" hidden>
+        <p>En Google Imágenes, abre la portada, mantén el dedo sobre ella y elige <b>«Copiar dirección de la imagen»</b>. Pégala aquí:</p>
+        <div class="fila-enlace"><input id="enlaceUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://…"><button type="button" class="principal" id="enlaceUsar">Usar</button></div>
+        <p class="enlace-err" id="enlaceErr" role="alert"></p>
+      </div>
       <div class="portada-form" id="portadaForm" hidden>
         <img id="portadaImg" alt="">
         <div><b>Portada</b><small id="portadaFuente"></small><button type="button" id="quitarPortada">Quitar portada</button></div>
@@ -221,7 +227,13 @@
       <button type="button" class="sec" id="btnDesconectar">Desconectar</button>
     </div>
     <hr>
-    <p class="nota">Portadas y datos automáticos: anime de <b>AniList</b>; libros de <b>Google Books</b> y <b>Open Library</b>.</p>
+    <div class="tmdb-ajuste">
+      <div><b>Clave de TMDB</b><small id="tmdbEstado"></small></div>
+      <button type="button" class="sec" id="tmdbCambiar">Añadir</button>
+      <button type="button" class="sec" id="tmdbQuitar" hidden>Quitar</button>
+    </div>
+    <p class="nota">Portadas y datos automáticos: películas y series de <b>TMDB</b>; anime de <b>AniList</b>; libros de <b>Google Books</b> y <b>Open Library</b>; portadas también de <b>Wikipedia</b>.
+      Este producto usa la API de TMDB pero no está avalado ni certificado por TMDB.</p>
     <button type="button" class="sec ancho" id="btnCompletar">🖼️ Buscar portadas que faltan</button>
     <button type="button" class="sec ancho" id="btnCSV">📊 Exportar a Excel (CSV)</button>
     <label class="check">
@@ -295,11 +307,42 @@
       <button type="submit" class="principal">Buscar</button>
     </form>
     <p class="bus-estado" id="compEstado"></p>
+    <button type="button" class="enlace-img" id="btnCompEnlace">🔗 ¿No aparece? Pega el enlace de una imagen</button>
+    <div class="enlace-box" id="compEnlaceBox" hidden>
+        <p>En Google Imágenes, abre la portada, mantén el dedo sobre ella y elige <b>«Copiar dirección de la imagen»</b>. Pégala aquí:</p>
+        <div class="fila-enlace"><input id="compEnlaceUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://…"><button type="button" class="principal" id="compEnlaceUsar">Usar</button></div>
+        <p class="enlace-err" id="compEnlaceErr" role="alert"></p>
+      </div>
     <ul class="lista" id="compLista"></ul>
   </div>
   <div class="comp-pie" id="compPie">
     <button type="button" class="sec" id="compSaltar">Saltar</button>
     <button type="button" class="sec" id="compNunca">No tiene portada</button>
+  </div>
+</dialog>
+
+<dialog id="tmdbDlg" aria-labelledby="tmdbTitulo">
+  <div class="ayuda">
+    <h2 id="tmdbTitulo">Clave de TMDB</h2>
+    <p class="nota">Para buscar portadas y datos de <b>películas y series</b> hace falta una clave gratuita de TMDB (The Movie Database). Solo se pide una vez: se guarda en tu repositorio de datos y llega sola a los demás móviles conectados a él.</p>
+    <details>
+      <summary>Cómo conseguirla (unos 5 minutos)</summary>
+      <ol>
+        <li>Entra en <b>themoviedb.org</b> y pulsa <b>«Únete a TMDB»</b> (Join TMDB). Crea la cuenta y <b>confirma tu correo</b>: sin confirmar, la clave no funciona.</li>
+        <li>Inicia sesión, toca tu foto (arriba a la derecha) › <b>Ajustes</b> (Settings) › <b>API</b>, en el menú de la izquierda.</li>
+        <li>En «Request an API Key» elige <b>Developer</b> (uso personal) y acepta las condiciones.</li>
+        <li>Rellena el formulario: tipo de uso <b>Website</b>; nombre <b>Mi Butaca</b>; dirección, la de tu app (<code>https://TU-USUARIO.github.io/mi-butaca/</code>); resumen: <i>«App personal para llevar las películas y series que veo»</i>. Envíalo.</li>
+        <li>En esa misma página verás la <b>API Key</b> (32 caracteres) y el <b>API Read Access Token</b> (muy largo). Copia cualquiera de los dos y pégalo aquí.</li>
+      </ol>
+    </details>
+    <label class="f"><span>Tu clave (API Key o Read Access Token)</span>
+      <input id="tmdbInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pega aquí tu clave"></label>
+    <p class="enlace-err" id="tmdbErr" role="alert"></p>
+    <div class="botones">
+      <button type="button" class="sec" id="tmdbAhoraNo">Ahora no</button>
+      <button type="button" class="principal" id="tmdbGuardar">Guardar</button>
+    </div>
+    <p class="tmdb-legal">Este producto usa la API de TMDB pero no está avalado ni certificado por TMDB.</p>
   </div>
 </dialog>
 

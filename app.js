@@ -114,6 +114,50 @@ function unir(a, b) {
 
 let cadena = Promise.resolve();
 function sincronizar(motivo) { cadena = cadena.then(() => sincronizarYa(motivo)).catch(() => {}); return cadena; }
+/** Ejecuta f en la misma cola que la sincronización (así nunca se pisan) y devuelve su resultado. */
+function enCola(f) { const p = cadena.then(f); cadena = p.catch(() => {}); return p; }
+
+/* ---- config.json: ajustes compartidos en el repositorio de datos (hoy, la clave de TMDB). Nunca toca historial.json ---- */
+const CONFIG = 'config.json';
+async function leerConfig(c = cfg) {
+  const r = await gh(`/contents/${CONFIG}`, {}, c);
+  if (r.status === 404) return { datos: null, sha: null };
+  if (!r.ok) throw new Error(`GitHub respondió ${r.status} al leer ${CONFIG}.`);
+  const j = await r.json();
+  let datos;
+  try { datos = JSON.parse(deB64(j.content || '') || '{}'); } catch { datos = null; }
+  if (!datos || typeof datos !== 'object' || Array.isArray(datos)) datos = { _mal: true };
+  return { datos, sha: j.sha };
+}
+/** Cambia solo las claves indicadas de config.json (null = quitarla), conservando el resto. */
+async function escribirConfig(cambio) {
+  for (let intento = 0; intento < 3; intento++) {
+    const { datos, sha: shaC } = await leerConfig();
+    if (datos?._mal) throw new Error(`${CONFIG} no es un JSON válido. Revísalo en GitHub.`);
+    const nuevo = { ...(datos || {}), ...cambio };
+    for (const k of Object.keys(nuevo)) if (nuevo[k] == null) delete nuevo[k];
+    const r = await gh(`/contents/${CONFIG}`, { method: 'PUT', body: JSON.stringify({
+      message: `${cfg.nombre || 'Mi Butaca'}: ${cambio.tmdb ? 'guarda' : 'quita'} la clave de TMDB`,
+      content: aB64(JSON.stringify(nuevo, null, 2) + '\n'), ...(shaC ? { sha: shaC } : {}),
+    }) });
+    if (r.status === 409 || r.status === 422) continue;
+    if (r.status === 403 || r.status === 404) throw new Error('El token no tiene permiso de escritura (Contents: Read and write).');
+    if (!r.ok) throw new Error(`GitHub respondió ${r.status}.`);
+    return;
+  }
+  throw new Error('GitHub está ocupado. Inténtalo de nuevo.');
+}
+/** Al sincronizar: manda la clave del repositorio; una clave puesta solo en este móvil se comparte. */
+async function sincronizarClave() {
+  const { datos } = await leerConfig();
+  if (datos?._mal) return; // config.json mal escrito a mano: no se toca nada
+  const remota = typeof datos?.tmdb === 'string' ? datos.tmdb.trim() : '';
+  const local = claveTMDB(), origen = leerLS(LS_TMDB_ORIGEN, 'movil');
+  if (remota) {
+    if (remota !== local || origen !== 'repo') { escribirLS(LS_TMDB, remota); escribirLS(LS_TMDB_ORIGEN, 'repo'); tmdbAhoraNo = false; }
+  } else if (local && origen === 'repo') borrarClaveLocal(); // se quitó desde otro móvil o desde GitHub
+  else if (local) { await escribirConfig({ tmdb: local }); escribirLS(LS_TMDB_ORIGEN, 'repo'); }
+}
 async function sincronizarYa() {
   if (!cfg) { pintarEstado(); return; }
   if (!navigator.onLine) { pintarEstado(); return; }
@@ -137,10 +181,12 @@ async function sincronizarYa() {
       sha = (await r.json()).content.sha; sucio = false; guardarLocal(); pintarTodo(); break;
     }
     ultimoError = null;
+    try { await sincronizarClave(); } catch { /* la clave compartida no es imprescindible: se reintenta la próxima vez */ }
   } catch (e) {
     ultimoError = e.message || 'Sin conexión con GitHub.';
   }
   pintarEstado();
+  if ($('#ajustes').open) pintarClaveTMDB();
 }
 let ultimoError = null, tokenMalo = false;
 const ordenar = l => [...l].sort((a, b) => (a.creado || '').localeCompare(b.creado || '') || a.id.localeCompare(b.id));
@@ -247,7 +293,7 @@ function generosUsados(t) { return visibles().filter(i => i.tipo === t && i.gene
 
 function limpiarForm() {
   ultimoAuto = ''; autoCampos = []; autoPlat = null; $('#autoHint').hidden = true;
-  portadaSel = null; mostrarPortadaForm();
+  portadaSel = null; mostrarPortadaForm(); if (typeof cerrarEnlaceForm === 'function') cerrarEnlaceForm();
   form.reset(); plataforma = null; formato = 'Kindle'; form.fechaFin.value = hoyISO(); form.anio.value = ANIO_ACTUAL; pintarChips();
   $$('.mal', form).forEach(i => i.classList.remove('mal'));
   visibilidad();
@@ -465,18 +511,173 @@ async function buscarLibroOpenLibrary(q) {
     datos: { autor: (d.author_name || [])[0] || '', paginas: d.number_of_pages_median, estreno: '' }, ext: { isbn: (d.isbn || [])[0] || '' },
   })).filter(x => x.titulo);
 }
+/* Wikipedia: se busca en español (entiende tus títulos) y la portada se toma del artículo en inglés,
+   porque la Wikipedia en español no admite imágenes con derechos de autor (casi todas las portadas). */
+async function buscarWikipedia(q) {
+  const api = (l, par) => `https://${l}.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&origin=*&${par}`;
+  const IMG = 'piprop=thumbnail&pithumbsize=400&pilicense=any';
+  const json = async u => { const r = await pedir(u); if (!r.ok) throw new Error(`Wikipedia respondió ${r.status}.`); return r.json(); };
+  const enc = encodeURIComponent(q);
+  const [es, en] = await Promise.allSettled([
+    json(api('es', `generator=search&gsrlimit=6&gsrsearch=${enc}&prop=pageimages|description|langlinks&lllang=en&${IMG}`)),
+    json(api('en', `generator=search&gsrlimit=4&gsrsearch=${enc}&prop=pageimages|description&${IMG}`)),
+  ]);
+  if (es.status === 'rejected' && en.status === 'rejected') throw es.reason;
+  const paginas = r => (r.status === 'fulfilled' ? r.value?.query?.pages || [] : []).slice().sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  const esP = paginas(es), enP = paginas(en);
+  const enlaceEn = p => { const l = (p.langlinks || [])[0]; return l ? l.title || l['*'] || '' : ''; };
+  const titulosEn = [...new Set(esP.map(enlaceEn).filter(Boolean))];
+  const imgEn = new Map();
+  if (titulosEn.length) {
+    try {
+      const d = await json(api('en', `titles=${encodeURIComponent(titulosEn.join('|'))}&redirects=1&prop=pageimages&${IMG}`));
+      const ruta = new Map([...(d.query?.normalized || []), ...(d.query?.redirects || [])].map(x => [x.from, x.to]));
+      const fin = t => { let v = t; for (let n = 0; n < 3 && ruta.has(v); n++) v = ruta.get(v); return v; };
+      const miniaturas = new Map((d.query?.pages || []).map(x => [x.title, x.thumbnail?.source]));
+      for (const t of titulosEn) imgEn.set(t, miniaturas.get(fin(t)));
+    } catch { /* sin la inglesa, se usa la imagen en español si la hay */ }
+  }
+  const out = [], usadas = new Set(), cubiertos = new Set();
+  const meter = r => { if (!r.portada || usadas.has(r.portada)) return; usadas.add(r.portada); out.push(r); };
+  for (const x of esP) {
+    const en_ = enlaceEn(x); if (en_) cubiertos.add(en_);
+    meter({ titulo: x.title, alt: en_ && en_ !== x.title ? en_ : '', sub: x.description || 'Artículo de Wikipedia', portada: https((en_ && imgEn.get(en_)) || x.thumbnail?.source),
+      fuente: 'Wikipedia', datos: {}, ext: {} });
+  }
+  for (const x of enP) if (!cubiertos.has(x.title))
+    meter({ titulo: x.title, alt: '', sub: x.description || 'Wikipedia en inglés', portada: https(x.thumbnail?.source), fuente: 'Wikipedia', datos: {}, ext: {} });
+  return out;
+}
+/* ---- TMDB (películas y series): necesita una clave gratuita, que se pide la primera vez y se guarda en el móvil ---- */
+const LS_TMDB = 'mb_tmdb', LS_TMDB_ORIGEN = 'mb_tmdb_origen'; // origen: 'repo' (compartida) o 'movil' (aún sin compartir)
+function borrarClaveLocal() { for (const k of [LS_TMDB, LS_TMDB_ORIGEN]) try { localStorage.removeItem(k); } catch { /* */ } }
+const claveTMDB = () => leerLS(LS_TMDB, '') || '';
+let tmdbAhoraNo = false; // si dices «Ahora no», no se vuelve a pedir hasta que reabras la app
+/** Llama a TMDB. Admite la «API Key» (va en la dirección) o el «Read Access Token» (va en la cabecera). */
+async function tmdb(ruta, params = {}, clave = claveTMDB()) {
+  const token = clave.length > 40, qs = new URLSearchParams({ ...params, ...(token ? {} : { api_key: clave }) });
+  const r = await pedir(`https://api.themoviedb.org/3${ruta}?${qs}`, { headers: { accept: 'application/json', ...(token ? { Authorization: `Bearer ${clave}` } : {}) } });
+  if (r.status === 401) { const e = new Error('La clave de TMDB no es válida o tu cuenta aún no está confirmada.'); e.clave = true; throw e; }
+  if (r.status === 429) throw new Error('TMDB está saturado ahora mismo. Prueba en un minuto.');
+  if (!r.ok) throw new Error(`TMDB respondió ${r.status}.`);
+  return r.json();
+}
+const posterTMDB = (p, t = 'w342') => (p ? `https://image.tmdb.org/t/p/${t}${p}` : '');
+const GENERO_TMDB = { 'Action & Adventure': 'Acción', 'Sci-Fi & Fantasy': 'Ciencia ficción', 'War & Politics': 'Bélica', Familia: 'Familiar',
+  Historia: 'Histórica', 'Música': 'Musical', Kids: 'Familiar', 'Película de TV': '', News: '', Talk: '', Soap: 'Drama', Reality: '' };
+const generoTMDB = gs => (gs || []).map(g => (g.name in GENERO_TMDB ? GENERO_TMDB[g.name] : g.name)).find(Boolean) || '';
+async function buscarTMDB(t, q) {
+  const peli = t === 'pelicula';
+  const d = await tmdb(peli ? '/search/movie' : '/search/tv', { query: q, language: 'es-ES', include_adult: 'false', page: '1' });
+  return (d.results || []).slice(0, 10).map(x => {
+    const titulo = peli ? x.title : x.name, orig = peli ? x.original_title : x.original_name, fecha = (peli ? x.release_date : x.first_air_date) || '';
+    return { titulo, alt: orig && orig !== titulo ? orig : '', sub: [peli ? 'Película' : 'Serie', fecha.slice(0, 4)].filter(Boolean).join(' · '),
+      portada: posterTMDB(x.poster_path), fuente: 'TMDB', datos: {}, ext: { tmdbId: x.id }, detalle: () => (peli ? detallePeli(x.id) : detalleSerie(x.id)) };
+  }).filter(x => x.titulo);
+}
+/** Película: duración, género y fecha de estreno en España (cine o plataforma) si la hay; si no, la original. */
+async function detallePeli(id) {
+  const d = await tmdb(`/movie/${id}`, { language: 'es-ES', append_to_response: 'release_dates' });
+  const es = (d.release_dates?.results || []).find(r => r.iso_3166_1 === 'ES');
+  const fechasES = (es?.release_dates || []).filter(x => x.type === 3 || x.type === 4).map(x => (x.release_date || '').slice(0, 10)).filter(Boolean).sort();
+  const hoy = hoyISO(), enEsp = fechasES.find(f => f >= hoy);
+  return { duracion: d.runtime || null, genero: generoTMDB(d.genres),
+    estreno: enEsp || ((d.release_date || '') > hoy ? d.release_date : ''), estrenoDe: enEsp ? 'en España' : 'original' };
+}
+/** Serie: duración del capítulo, género y, por temporada, nº de capítulos, fecha y póster. */
+async function detalleSerie(id) {
+  const d = await tmdb(`/tv/${id}`, { language: 'es-ES' });
+  return { duracionCap: (d.episode_run_time || [])[0] || d.last_episode_to_air?.runtime || d.next_episode_to_air?.runtime || null, genero: generoTMDB(d.genres),
+    temporadas: (d.seasons || []).filter(x => x.season_number > 0).map(x => ({ n: x.season_number, caps: x.episode_count, fecha: x.air_date || '', poster: posterTMDB(x.poster_path) })),
+    proximo: d.next_episode_to_air || null };
+}
+/** De los datos de una serie, lo que corresponde a las temporadas indicadas («3» o «1-3»). */
+function datosDeTemporadas(det, t) {
+  if (!det?.temporadas || !t || t.ini == null) return {};
+  const sel = det.temporadas.filter(x => x.n >= t.ini && x.n <= (t.fin || t.ini));
+  if (!sel.length) return {};
+  const out = { capitulos: sel.reduce((a, x) => a + (x.caps || 0), 0) || null, portadaTemp: sel[0].poster || '' };
+  if (sel[0].fecha > hoyISO()) { out.estreno = sel[0].fecha; out.estrenoDe = 'original'; }
+  if (det.proximo?.season_number === sel[0].n && det.proximo?.episode_number === 1 && det.proximo.air_date) { out.estreno = det.proximo.air_date; out.estrenoDe = 'original'; }
+  return out;
+}
+/** Pide la clave de TMDB (con los pasos para conseguirla). Devuelve true si se guarda una válida. */
+function pedirClaveTMDB() {
+  return new Promise(res => {
+    const dlg = $('#tmdbDlg'), inp = $('#tmdbInput'), err = $('#tmdbErr'), guardar = $('#tmdbGuardar'), ahoraNo = $('#tmdbAhoraNo');
+    inp.value = ''; err.textContent = ''; dlg.querySelector('details').open = !claveTMDB();
+    const fin = v => { guardar.onclick = ahoraNo.onclick = null; dlg.onclose = null; if (dlg.open) dlg.close(); res(v); };
+    guardar.onclick = async () => {
+      const k = inp.value.trim();
+      if (!k) { err.textContent = 'Pega primero tu clave.'; return; }
+      if (/[^\x21-\x7e]/.test(k)) { err.textContent = 'La clave tiene espacios o caracteres que no son suyos. Vuelve a copiarla.'; return; }
+      err.textContent = ''; guardar.disabled = true; guardar.textContent = 'Comprobando…';
+      try { await tmdb('/configuration', {}, k); }
+      catch (e) {
+        err.textContent = e.clave ? 'Esa clave no es válida. Comprueba que la has copiado entera y que confirmaste tu correo en TMDB.' : 'No se pudo comprobar la clave (¿sin conexión?). Inténtalo de nuevo.';
+        guardar.disabled = false; guardar.textContent = 'Guardar'; return;
+      }
+      escribirLS(LS_TMDB, k); escribirLS(LS_TMDB_ORIGEN, 'movil'); tmdbAhoraNo = false;
+      if (cfg) { // se comparte con todos los móviles conectados al repositorio de datos
+        guardar.textContent = 'Compartiendo…';
+        try { await enCola(() => escribirConfig({ tmdb: k })); escribirLS(LS_TMDB_ORIGEN, 'repo'); avisar('Clave guardada para todos los móviles conectados'); }
+        catch { avisar('Clave guardada en este móvil. Se compartirá al sincronizar'); }
+      } else avisar('Clave guardada. Se compartirá cuando conectes con GitHub');
+      guardar.disabled = false; guardar.textContent = 'Guardar'; fin(true);
+    };
+    ahoraNo.onclick = () => { tmdbAhoraNo = true; fin(false); };
+    dlg.onclose = () => fin(false);
+    dlg.showModal(); inp.focus();
+  });
+}
+/** Antes de buscar una película o serie: si no hay clave (y no has dicho «Ahora no»), la pide. */
+async function asegurarClave(t) {
+  if ((t === 'pelicula' || t === 'serie') && !claveTMDB() && !tmdbAhoraNo) await pedirClaveTMDB();
+}
+
+/** Consulta todas las fuentes a la vez y junta los resultados. Solo falla si fallan todas. */
+async function buscarTodo(t, q) {
+  const fuentes = t === 'libro'
+    ? [['Google Books', buscarLibroGoogle, 8], ['Open Library', buscarLibroOpenLibrary, 5], ['Wikipedia', buscarWikipedia, 5]]
+    : t === 'anime' ? [['AniList', buscarAnime, 8], ['Wikipedia', buscarWikipedia, 5]]
+    : claveTMDB() ? [['TMDB', x => buscarTMDB(t, x), 10], ['Wikipedia', buscarWikipedia, 4]] : [['Wikipedia', buscarWikipedia, 6]];
+  const res = await Promise.allSettled(fuentes.map(([, f]) => f(q)));
+  const lista = [], fallos = []; let primerError = null;
+  let claveMala = false;
+  res.forEach((r, n) => {
+    if (r.status === 'fulfilled') lista.push(...r.value.slice(0, fuentes[n][2]));
+    else { fallos.push(fuentes[n][0]); primerError = primerError || r.reason; if (r.reason?.clave) claveMala = true; }
+  });
+  if (fallos.length === fuentes.length) { if (claveMala) primerError.clave = true; throw primerError; }
+  // Open Library repite a veces el mismo libro que Google: se quita si Google ya lo trae con portada
+  const conPortada = new Set(lista.filter(r => r.fuente === 'Google Books' && r.portada).map(r => r.ext?.isbn).filter(Boolean));
+  return { lista: lista.filter(r => !(r.fuente === 'Open Library' && r.ext?.isbn && conPortada.has(r.ext.isbn))), fallos, claveMala,
+    sinClave: (t === 'pelicula' || t === 'serie') && !claveTMDB() };
+}
+const avisoFallos = f => f.length ? `${f.join(' y ')} no ${f.length > 1 ? 'han' : 'ha'} respondido; te enseño el resto.` : '';
+/** Mensaje bajo la búsqueda: fuentes caídas, clave mala o sin clave (con botón para ponerla). */
+function notaBusqueda(r) {
+  if (r.claveMala) return `${esc('La clave de TMDB no es válida: solo ves resultados de Wikipedia.')}<button type="button" data-clave>Cambiar clave</button>`;
+  if (r.sinClave) return `Sin clave de TMDB solo busco en Wikipedia.<button type="button" data-clave>Añadir clave</button>`;
+  return esc(avisoFallos(r.fallos));
+}
+const NOMBRE_BUSCAR = { pelicula: 'Buscar película', serie: 'Buscar serie', anime: 'Buscar anime', libro: 'Buscar libro' };
+const FUENTES_BUSCAR = { pelicula: 'Datos y portadas de TMDB · portadas también de Wikipedia. Este producto usa la API de TMDB pero no está avalado ni certificado por TMDB.',
+  serie: 'Datos y portadas de TMDB · portadas también de Wikipedia. Este producto usa la API de TMDB pero no está avalado ni certificado por TMDB.',
+  anime: 'Datos y portadas de AniList · portadas también de Wikipedia', libro: 'Datos y portadas de Google Books, Open Library y Wikipedia' };
 async function buscarLibro(q) {
   try { const l = await buscarLibroGoogle(q); if (l.length) return l; } catch { /* si Google falla, se prueba con Open Library */ }
   return buscarLibroOpenLibrary(q);
 }
 
 let resultados = [];
-function abrirBusqueda() {
+async function abrirBusqueda() {
   const libro = tipo === 'libro';
-  $('#busTitulo').textContent = libro ? 'Buscar libro' : 'Buscar anime';
-  $('#busFuente').textContent = libro ? 'Datos y portadas de Google Books y Open Library' : 'Datos y portadas de AniList';
+  await asegurarClave(tipo);
+  $('#busTitulo').textContent = NOMBRE_BUSCAR[tipo];
+  $('#busFuente').textContent = FUENTES_BUSCAR[tipo];
   const q = [campoTitulo().value.trim(), libro ? form.autor.value.trim() : ''].filter(Boolean).join(' ');
-  $('#busQ').value = q; $('#busQ').placeholder = libro ? 'Título y, si quieres, autor' : 'Título del anime';
+  $('#busQ').value = q; $('#busQ').placeholder = libro ? 'Título y, si quieres, autor' : { anime: 'Título del anime', pelicula: 'Título de la película', serie: 'Título de la serie' }[tipo];
   $('#busLista').innerHTML = ''; $('#busEstado').textContent = q ? '' : 'Escribe el título y pulsa Buscar.';
   $('#busqueda').showModal();
   if (q) buscarAhora(); else $('#busQ').focus();
@@ -487,48 +688,69 @@ async function buscarAhora() {
   est.textContent = 'Buscando…'; ul.innerHTML = '';
   if (!navigator.onLine) { est.textContent = 'Sin conexión. Puedes rellenarlo a mano.'; return; }
   try {
-    resultados = libro ? await buscarLibro(q) : await buscarAnime(q);
-    est.textContent = resultados.length ? '' : 'No he encontrado nada. Prueba con otro título (en anime, a veces funciona mejor en inglés o japonés).';
+    const r_ = await buscarTodo(tipo, q);
+    resultados = r_.lista;
+    est.innerHTML = resultados.length ? notaBusqueda(r_)
+      : `No he encontrado nada${r_.fallos.length ? ` (${esc(avisoFallos(r_.fallos).split(';')[0])})` : ''}. Prueba con otro título${libro ? ' o con el ISBN (isbn:978…)' : tipo === 'anime' ? ' (en anime, a veces funciona mejor en inglés o japonés)' : ''}, o pega el enlace de una imagen.${r_.claveMala || r_.sinClave ? ' ' + notaBusqueda(r_) : ''}`;
     ul.innerHTML = resultados.map((r, n) => `<li><button type="button" class="bus-res" data-res="${n}">
-      ${r.portada ? `<img src="${esc(r.portada)}" alt="" loading="lazy" onerror="portadaRota(this, ${n})">` : `<span class="sin">${libro ? '📖' : '🍥'}</span>`}
-      <span><b>${esc(r.titulo)}</b>${r.alt ? `<i>${esc(r.alt)}</i>` : ''}<small>${esc(r.sub)}</small></span></button></li>`).join('');
+      ${r.portada ? `<img src="${esc(r.portada)}" alt="" loading="lazy" onerror="portadaRota(this, ${n})">` : `<span class="sin">${ICONO_TIPO[tipo]}</span>`}
+      <span><b>${esc(r.titulo)}</b>${r.alt ? `<i>${esc(r.alt)}</i>` : ''}<small>${esc(r.sub)}</small><span class="fte">${esc(r.fuente)}</span></span></button></li>`).join('');
   } catch (e) {
-    est.textContent = e.name === 'AbortError' ? 'La búsqueda ha tardado demasiado. Inténtalo de nuevo.'
-      : `${e.message && !e.message.startsWith('Failed') ? e.message : 'No se pudo conectar.'} Puedes rellenarlo a mano.`;
+    est.innerHTML = e.name === 'AbortError' ? 'La búsqueda ha tardado demasiado. Inténtalo de nuevo.'
+      : `${esc(e.message && !e.message.startsWith('Failed') ? e.message : 'No se pudo conectar.')} Puedes rellenarlo a mano.${e.clave ? '<button type="button" data-clave>Cambiar clave</button>' : ''}`;
   }
 }
+// «Cambiar / Añadir clave» desde el mensaje de la búsqueda: la pide y repite la búsqueda
+for (const [estado, repetir] of [['#busEstado', () => buscarAhora()], ['#compEstado', () => buscarCompletar()]])
+  $(estado).addEventListener('click', async e => { if (e.target.closest('[data-clave]') && await pedirClaveTMDB()) repetir(); });
 /** Aplica un resultado: rellena lo que esté vacío y pone la portada. */
 function aplicarResultado(r) {
   const hechos = [], set = (el, v, nombre) => { if (v != null && v !== '' && !el.value) { el.value = v; hechos.push(nombre); } };
+  if (r.datos.temporadas) Object.assign(r.datos, datosDeTemporadas(r.datos, leerTemporadas(form.temporada.value)));
+  if (r.datos.portadaTemp) r = { ...r, portada: r.datos.portadaTemp };
   set(campoTitulo(), r.titulo, 'título');
   if (tipo === 'libro') { set(form.autor, r.datos.autor, 'autor'); if (modo === 'hecho') set(form.paginas, r.datos.paginas, 'páginas'); }
   else {
-    if (modo === 'hecho') { set(form.capitulos, r.datos.capitulos, 'capítulos'); set(form.duracionCap, r.datos.duracionCap, 'duración'); }
+    if (modo === 'hecho') {
+      set(form.capitulos, r.datos.capitulos, 'capítulos'); set(form.duracionCap, r.datos.duracionCap, 'duración');
+      if (tipo === 'pelicula') set(form.duracion, r.datos.duracion, 'duración');
+    }
     set(form.genero, r.datos.genero, 'género');
   }
-  if (modo === 'pendiente') set(form.estreno, r.datos.estreno, 'fecha de estreno');
+  if (modo === 'pendiente') set(form.estreno, r.datos.estreno, r.datos.estrenoDe ? `fecha de estreno (${r.datos.estrenoDe})` : 'fecha de estreno');
   if (r.portada) { portadaSel = { url: r.portada, fuente: r.fuente, ...r.ext }; hechos.push('portada'); }
   else portadaSel = { url: '', fuente: r.fuente, ...r.ext };
   mostrarPortadaForm();
   const hint = $('#autoHint'); hint.classList.remove('oferta');
-  hint.textContent = hechos.length ? `✓ Datos de ${r.fuente}: ${hechos.join(', ')}. Puedes corregir lo que quieras.` : `Ya estaba todo rellenado.`;
+  hint.textContent = (hechos.length ? `✓ Datos de ${r.fuente}: ${hechos.join(', ')}. Puedes corregir lo que quieras.` : `Ya estaba todo rellenado.`)
+    + (tipo === 'serie' && r.datos.temporadas && !form.temporada.value ? ' Pon la temporada y vuelve a buscar para rellenar sus capítulos.' : '');
   hint.hidden = false; pintarDuplicado();
 }
 $('#btnBuscarDatos').addEventListener('click', abrirBusqueda);
 $('#busForm').addEventListener('submit', e => { e.preventDefault(); buscarAhora(); });
 $('#busCerrar').addEventListener('click', () => $('#busqueda').close());
-$('#busLista').addEventListener('click', e => {
+/** Los resultados de TMDB traen lo básico; al elegir uno se piden sus detalles (duración, temporadas, estreno). */
+async function cargarDetalle(r, est) {
+  if (!r.detalle || r.cargado) return;
+  est.textContent = 'Cargando datos…';
+  try { Object.assign(r.datos, await r.detalle()); r.cargado = true; est.textContent = ''; }
+  catch (e) { est.textContent = ''; avisar(e.clave ? 'Clave de TMDB no válida: solo se pone la portada' : 'No se pudieron cargar los detalles: solo se pone la portada'); }
+}
+$('#busLista').addEventListener('click', async e => {
   const b = e.target.closest('[data-res]'); if (!b) return;
-  aplicarResultado(resultados[Number(b.dataset.res)]); $('#busqueda').close();
+  const r = resultados[Number(b.dataset.res)];
+  await cargarDetalle(r, $('#busEstado'));
+  aplicarResultado(r); $('#busqueda').close();
 });
 
 /* ---- completar portadas de registros antiguos (asistente, uno a uno) ---- */
-const sinPortada = () => visibles().filter(i => (i.tipo === 'anime' || i.tipo === 'libro') && !i.portada && !i.sinPortada)
-  .sort((a, b) => (a.tipo === 'libro') - (b.tipo === 'libro') || a.titulo.localeCompare(b.titulo, 'es'));
+const ORDEN_COMPLETAR = { anime: 0, libro: 1, pelicula: 2, serie: 3 };
+const sinPortada = () => visibles().filter(i => !i.portada && !i.sinPortada)
+  .sort((a, b) => ORDEN_COMPLETAR[a.tipo] - ORDEN_COMPLETAR[b.tipo] || a.titulo.localeCompare(b.titulo, 'es'));
 let cola = [], posCola = 0, anadidas = 0, saltadas = 0, resComp = [];
 function abrirCompletar() {
   cola = sinPortada().map(i => i.id); posCola = 0; anadidas = 0; saltadas = 0;
-  if (!cola.length) { avisar('Todos tus animes y libros ya tienen portada'); return; }
+  if (!cola.length) { avisar('Todo tu historial ya tiene portada'); return; }
   $('#ajustes').close(); $('#completar').showModal(); mostrarActual();
 }
 function mostrarActual() {
@@ -541,41 +763,47 @@ function mostrarActual() {
   const det = [i.tipo === 'libro' ? i.autor : etiquetaTemp(i), esPend(i) ? (i.tipo === 'libro' ? 'Por leer' : 'Por ver') : anioDe(i)].filter(Boolean).join(' · ');
   $('#compActual').className = 'comp-actual';
   $('#compActual').innerHTML = `<span class="que">${ICONO_TIPO[i.tipo]} ${NOMBRE_TIPO[i.tipo]} sin portada</span><h3>${esc(i.titulo)}</h3>${det ? `<p>${esc(det)}</p>` : ''}`;
-  $('#compForm').hidden = false; $('#compPie').hidden = false;
+  $('#compForm').hidden = false; $('#compPie').hidden = false; $('#btnCompEnlace').hidden = false; cerrarEnlaceComp();
   $('#compQ').value = [i.titulo, i.tipo === 'libro' ? i.autor : ''].filter(Boolean).join(' ');
   buscarCompletar();
 }
 async function buscarCompletar() {
   const i = items.find(x => x.id === cola[posCola]); if (!i) return;
-  const q = $('#compQ').value.trim(), est = $('#compEstado'), ul = $('#compLista'), libro = i.tipo === 'libro';
+  const q = $('#compQ').value.trim(), est = $('#compEstado'), ul = $('#compLista');
   ul.innerHTML = ''; resComp = [];
   if (!q) { est.textContent = 'Escribe un título y pulsa Buscar.'; return; }
+  await asegurarClave(i.tipo);
   if (!navigator.onLine) { est.textContent = 'Sin conexión. Puedes salir y seguir más tarde.'; return; }
   est.textContent = 'Buscando…';
   const idBuscado = i.id;
   try {
-    const res = libro ? await buscarLibro(q) : await buscarAnime(q);
+    const r_ = await buscarTodo(i.tipo, q);
     if (cola[posCola] !== idBuscado) return; // ya se ha pasado al siguiente
-    resComp = res.slice(0, 6);
-    est.textContent = resComp.length ? '' : 'Sin resultados. Prueba con otro texto, o salta este.';
+    resComp = r_.lista.slice(0, 10);
+    est.innerHTML = resComp.length ? notaBusqueda(r_) : `Sin resultados. Prueba con otro texto, pega el enlace de una imagen o salta este.${r_.claveMala || r_.sinClave ? ' ' + notaBusqueda(r_) : ''}`;
     ul.innerHTML = resComp.map((r, n) => `<li><button type="button" class="bus-res${n === 0 ? ' prob' : ''}" data-comp="${n}">
-      ${r.portada ? `<img src="${esc(r.portada)}" alt="" loading="lazy" onerror="portadaRota(this, ${n})">` : `<span class="sin">${libro ? '📖' : '🍥'}</span>`}
-      <span>${n === 0 ? '<span class="etq">Más probable</span>' : ''}<b>${esc(r.titulo)}</b>${r.alt ? `<i>${esc(r.alt)}</i>` : ''}<small>${esc(r.sub)}${r.portada ? '' : ' · sin portada'}</small></span></button></li>`).join('');
+      ${r.portada ? `<img src="${esc(r.portada)}" alt="" loading="lazy" onerror="portadaRota(this, ${n})">` : `<span class="sin">${ICONO_TIPO[i.tipo]}</span>`}
+      <span>${n === 0 ? '<span class="etq">Más probable</span>' : ''}<b>${esc(r.titulo)}</b>${r.alt ? `<i>${esc(r.alt)}</i>` : ''}<small>${esc(r.sub)}${r.portada ? '' : ' · sin portada'}</small><span class="fte">${esc(r.fuente)}</span></span></button></li>`).join('');
   } catch (e) {
     if (cola[posCola] !== idBuscado) return;
-    est.textContent = e.name === 'AbortError' ? 'La búsqueda ha tardado demasiado. Pulsa Buscar para reintentar.'
-      : `${e.message && !e.message.startsWith('Failed') ? e.message : 'No se pudo conectar.'} Pulsa Buscar para reintentar, o salta este.`;
+    est.innerHTML = e.name === 'AbortError' ? 'La búsqueda ha tardado demasiado. Pulsa Buscar para reintentar.'
+      : `${esc(e.message && !e.message.startsWith('Failed') ? e.message : 'No se pudo conectar.')} Pulsa Buscar para reintentar, o salta este.${e.clave ? '<button type="button" data-clave>Cambiar clave</button>' : ''}`;
   }
 }
 /** Guarda la portada elegida y rellena lo que estuviera vacío (sin tocar lo que ya tenías). */
-function usarResultado(n) {
+async function usarResultado(n) {
   const r = resComp[n], i = items.find(x => x.id === cola[posCola]);
   if (!r || !i) return;
-  if (!r.portada) { avisar('Ese resultado no tiene portada: elige otro o salta'); return; }
+  await cargarDetalle(r, $('#compEstado'));
+  if (r.datos.temporadas) Object.assign(r.datos, datosDeTemporadas(r.datos, { ini: i.temporada ?? null, fin: i.temporadaFin || null }));
+  const portada = r.datos.portadaTemp || r.portada;
+  if (!portada) { avisar('Ese resultado no tiene portada: elige otro o salta'); return; }
   const vacio = k => i[k] == null || i[k] === '';
-  i.portada = r.portada;
+  i.portada = portada;
   if (r.ext?.isbn && vacio('isbn')) i.isbn = r.ext.isbn;
   if (r.ext?.anilistId && vacio('anilistId')) i.anilistId = r.ext.anilistId;
+  if (r.ext?.tmdbId && vacio('tmdbId')) i.tmdbId = r.ext.tmdbId;
+  if (i.tipo === 'pelicula' && !esPend(i) && vacio('duracion') && r.datos.duracion) i.duracion = r.datos.duracion;
   if (i.tipo === 'libro') { if (vacio('autor') && r.datos.autor) i.autor = r.datos.autor; if (!esPend(i) && vacio('paginas') && r.datos.paginas) i.paginas = r.datos.paginas; }
   else {
     if (!esPend(i)) { if (vacio('capitulos') && r.datos.capitulos) i.capitulos = r.datos.capitulos; if (vacio('duracionCap') && r.datos.duracionCap) i.duracionCap = r.datos.duracionCap; }
@@ -588,6 +816,7 @@ function usarResultado(n) {
 function finCompletar() {
   $('#compProgreso').textContent = ''; $('#compBarra').style.width = '100%';
   $('#compForm').hidden = true; $('#compPie').hidden = true; $('#compLista').innerHTML = ''; $('#compEstado').textContent = '';
+  $('#btnCompEnlace').hidden = true; cerrarEnlaceComp();
   const quedan = sinPortada().length;
   $('#compActual').className = 'comp-actual fin';
   $('#compActual').innerHTML = `<h3>${anadidas ? `✓ ${anadidas} ${anadidas === 1 ? 'portada añadida' : 'portadas añadidas'}` : 'Sin cambios'}</h3>
@@ -597,6 +826,24 @@ function finCompletar() {
 }
 function cerrarCompletar() { $('#completar').close(); pintarTodo(); if (anadidas) sincronizar(); }
 $('#btnCompletar').addEventListener('click', abrirCompletar);
+function pintarClaveTMDB() {
+  const k = claveTMDB(), fin = `(…${k.slice(-4)})`;
+  $('#tmdbEstado').textContent = !k ? 'Sin clave: las películas y series solo buscan en Wikipedia'
+    : leerLS(LS_TMDB_ORIGEN, 'movil') === 'repo' ? `Compartida en tu repositorio de datos ${fin}`
+    : cfg ? `Solo en este móvil ${fin}: se compartirá al sincronizar` : `Solo en este móvil ${fin}: se compartirá al conectar con GitHub`;
+  $('#tmdbCambiar').textContent = k ? 'Cambiar' : 'Añadir';
+  $('#tmdbQuitar').hidden = !k;
+}
+$('#tmdbCambiar').addEventListener('click', async () => { await pedirClaveTMDB(); pintarClaveTMDB(); });
+$('#tmdbQuitar').addEventListener('click', async () => {
+  const compartida = cfg && leerLS(LS_TMDB_ORIGEN, 'movil') === 'repo';
+  if (!confirm(compartida ? '¿Quitar la clave de TMDB? Se quitará de todos los móviles conectados a tu repositorio de datos.' : '¿Quitar la clave de TMDB de este móvil?')) return;
+  if (compartida) {
+    try { await enCola(() => escribirConfig({ tmdb: null })); }
+    catch (e) { avisar(`No se pudo quitar del repositorio: ${e.message || 'sin conexión'}`); return; }
+  }
+  borrarClaveLocal(); tmdbAhoraNo = false; pintarClaveTMDB(); avisar('Clave de TMDB quitada');
+});
 $('#compCerrar').addEventListener('click', cerrarCompletar);
 $('#compForm').addEventListener('submit', e => { e.preventDefault(); buscarCompletar(); });
 $('#compLista').addEventListener('click', e => { const b = e.target.closest('[data-comp]'); if (b) usarResultado(Number(b.dataset.comp)); });
@@ -607,6 +854,50 @@ $('#compNunca').addEventListener('click', () => {
   posCola++; mostrarActual();
 });
 $('#compActual').addEventListener('click', e => { if (e.target.id === 'compListo') cerrarCompletar(); });
+
+/* ---- portada a partir del enlace de una imagen (Google Imágenes › «Copiar dirección de la imagen») ---- */
+function normalizarEnlace(raw) {
+  let u = String(raw || '').trim();
+  if (!u) throw new Error('Pega primero la dirección de la imagen.');
+  if (/^data:image\//i.test(u)) {
+    if (u.length > 120000) throw new Error('Esa imagen viene incrustada y es demasiado grande. Ábrela primero y copia su dirección.');
+    return u;
+  }
+  u = u.replace(/^http:\/\//i, 'https://');
+  if (!/^https:\/\/\S+$/i.test(u)) throw new Error('Eso no parece la dirección de una imagen (debe empezar por https://).');
+  return u;
+}
+function probarImagen(u) {
+  return new Promise((ok, ko) => {
+    const im = new Image(), t = setTimeout(() => ko(new Error('La imagen tarda demasiado en cargar. Prueba con otra.')), 10000);
+    im.onload = () => { clearTimeout(t); if (im.naturalWidth < 40) ko(new Error('Esa imagen es demasiado pequeña. Busca una más grande.')); else ok(u); };
+    im.onerror = () => { clearTimeout(t); ko(new Error('No se pudo cargar esa imagen. Asegúrate de copiar la dirección de la imagen, no la de la página.')); };
+    im.src = u;
+  });
+}
+/** Conecta un bloque «pegar enlace»: botón que lo despliega, campo, botón Usar y mensaje de error. */
+function montarEnlace(boton, pref, alUsar) {
+  const box = $(`#${pref}Box`), inp = $(`#${pref}Url`), err = $(`#${pref}Err`), usar = $(`#${pref}Usar`);
+  $(boton).addEventListener('click', () => { box.hidden = !box.hidden; err.textContent = ''; if (!box.hidden) inp.focus(); });
+  const probar = async () => {
+    err.textContent = ''; usar.disabled = true; const txt = usar.textContent; usar.textContent = '…';
+    try { const u = await probarImagen(normalizarEnlace(inp.value)); inp.value = ''; box.hidden = true; alUsar(u); }
+    catch (e) { err.textContent = e.message; }
+    usar.disabled = false; usar.textContent = txt;
+  };
+  usar.addEventListener('click', probar);
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); probar(); } });
+  return () => { box.hidden = true; inp.value = ''; err.textContent = ''; };
+}
+const cerrarEnlaceForm = montarEnlace('#btnEnlace', 'enlace', u => {
+  portadaSel = { ...(portadaSel || {}), url: u, fuente: 'un enlace' }; mostrarPortadaForm();
+  const hint = $('#autoHint'); hint.classList.remove('oferta'); hint.textContent = '✓ Portada añadida desde el enlace.'; hint.hidden = false;
+});
+const cerrarEnlaceComp = montarEnlace('#btnCompEnlace', 'compEnlace', u => {
+  const i = items.find(x => x.id === cola[posCola]); if (!i) return;
+  i.portada = u; i.actualizado = sello(i); sucio = true; guardarLocal();
+  anadidas++; posCola++; mostrarActual();
+});
 
 /** Miniatura de portada en las listas; si la imagen falla, vuelve la barrita de color. */
 const marcaDe = i => i.portada
@@ -663,6 +954,7 @@ form.addEventListener('submit', e => {
   else if (previo?.sinPortada) item.sinPortada = true;
   if (portadaSel?.anilistId) item.anilistId = portadaSel.anilistId;
   if (portadaSel?.isbn) item.isbn = portadaSel.isbn;
+  if (portadaSel?.tmdbId) item.tmdbId = portadaSel.tmdbId;
   if (modo === 'hecho') {
     if (form.revisionado.checked) item.revisionado = true;
     if (item.recomienda && form.porque.value.trim()) item.porque = form.porque.value.trim();
@@ -693,7 +985,7 @@ function editar(id) {
   editandoId = id; ponerTipo(it.tipo); ponerModo(esPend(it) ? 'pendiente' : 'hecho'); limpiarForm(); form.anio.value = anioDe(it);
   form.nota.value = it.nota || ''; form.ganas.checked = !!it.ganas; form.estreno.value = it.estreno || '';
   form.revisionado.checked = !!it.revisionado; form.recomienda.checked = !!it.recomienda; form.porque.value = it.porque || '';
-  portadaSel = it.portada || it.anilistId || it.isbn ? { url: it.portada || '', anilistId: it.anilistId, isbn: it.isbn } : null; mostrarPortadaForm();
+  portadaSel = it.portada || it.anilistId || it.isbn || it.tmdbId ? { url: it.portada || '', anilistId: it.anilistId, isbn: it.isbn, tmdbId: it.tmdbId } : null; mostrarPortadaForm();
   if (it.tipo === 'libro') {
     form.libro.value = it.titulo; form.autor.value = it.autor || ''; formato = it.formato || 'Kindle';
     form.paginas.value = it.paginas ?? ''; form.precio.value = it.precio != null ? String(it.precio).replace('.', ',') : ''; form.fechaFin.value = it.fechaFin || '';
@@ -1166,6 +1458,7 @@ $('#btnSync').addEventListener('click', () => {
   fa.owner.value = cfg?.owner || ''; fa.repo.value = cfg?.repo || 'mi-butaca-datos';
   fa.token.value = cfg?.token || ''; fa.nombre.value = cfg?.nombre || ''; fa.caduca.value = cfg?.caduca || '';
   $('#avisoExport').checked = !!leerLS(LS_AVISO_EXPORT, false);
+  pintarClaveTMDB();
   const nSin = sinPortada().length;
   $('#btnCompletar').textContent = nSin ? `🖼️ Buscar portadas que faltan (${nSin})` : '🖼️ Portadas: todo completo';
   $('#btnCompletar').disabled = !nSin;
@@ -1210,7 +1503,7 @@ const COLUMNAS = [
   ['Páginas', i => i.paginas], ['Precio (€)', i => (i.precio != null ? String(i.precio).replace('.', ',') : '')],
   ['Fecha', i => i.fechaFin || i.fechaVisto], ['Recomendado', i => (i.recomienda ? 'Sí' : '')], ['Por qué', i => i.porque],
   ['Revisionado / relectura', i => (i.revisionado ? 'Sí' : '')], ['Estreno', i => i.estreno], ['Nota', i => i.nota],
-  ['Muchas ganas', i => (i.ganas ? 'Sí' : '')], ['ISBN', i => i.isbn], ['Portada', i => i.portada], ['Añadido', i => (i.creado || '').slice(0, 10)],
+  ['Muchas ganas', i => (i.ganas ? 'Sí' : '')], ['ISBN', i => i.isbn], ['TMDB', i => i.tmdbId], ['Portada', i => i.portada], ['Añadido', i => (i.creado || '').slice(0, 10)],
 ];
 /** CSV con «;» y BOM UTF-8: Excel en español lo abre directamente en columnas y con acentos. */
 function textoCSV() {
