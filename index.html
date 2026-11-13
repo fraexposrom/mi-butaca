@@ -46,7 +46,7 @@
     <div id="vHecho">
     <div class="stats" id="statsVistas"></div>
     <div class="recalc-fila"><button type="button" class="recalc" data-recalc>↻ Recalcular</button></div>
-    <input class="buscar" id="buscarVistas" type="search" placeholder="Buscar título, género, plataforma…" autocomplete="off">
+    <div class="buscar-fila"><input class="buscar" id="buscarVistas" type="search" placeholder="Buscar título, género, plataforma…" autocomplete="off"><button type="button" class="vista-btn" data-vista></button></div>
     <div class="chips filtros" id="filtroVistas" role="tablist">
       <button class="chip on" data-f="todo">Todo</button>
       <button class="chip" data-f="pelicula">Películas</button>
@@ -59,7 +59,7 @@
     </div>
     <div id="vPend" hidden>
       <button class="elegir" id="elegirV" type="button"><span>🎲</span> No sé qué ver: elige por mí</button>
-      <input class="buscar" id="buscarPorVer" type="search" placeholder="Buscar en Por ver…" autocomplete="off">
+      <div class="buscar-fila"><input class="buscar" id="buscarPorVer" type="search" placeholder="Buscar en Por ver…" autocomplete="off"><button type="button" class="vista-btn" data-vista></button></div>
       <div class="chips filtros" id="filtroPorVer">
         <button class="chip on" data-f="todo">Todo</button>
         <button class="chip" data-f="pelicula">Películas</button>
@@ -189,13 +189,13 @@
     <div id="lHecho">
     <div class="stats" id="statsLeidos"></div>
     <div class="recalc-fila"><button type="button" class="recalc" data-recalc>↻ Recalcular</button></div>
-    <input class="buscar" id="buscarLeidos" type="search" placeholder="Buscar libro o autor…" autocomplete="off">
+    <div class="buscar-fila"><input class="buscar" id="buscarLeidos" type="search" placeholder="Buscar libro o autor…" autocomplete="off"><button type="button" class="vista-btn" data-vista></button></div>
     <div class="chips filtros anios" id="anioLeidos"></div>
     <div id="listaLeidos"></div>
     </div>
     <div id="lPend" hidden>
       <button class="elegir" id="elegirL" type="button"><span>🎲</span> No sé qué leer: elige por mí</button>
-      <input class="buscar" id="buscarPorLeer" type="search" placeholder="Buscar libro o autor…" autocomplete="off">
+      <div class="buscar-fila"><input class="buscar" id="buscarPorLeer" type="search" placeholder="Buscar libro o autor…" autocomplete="off"><button type="button" class="vista-btn" data-vista></button></div>
       <div class="chips filtros" id="filtroPorLeer">
         <button class="chip on" data-f="todo">Todos</button>
         <button class="chip" data-f="ganas">⭐ Con ganas</button>

@@ -369,3 +369,27 @@ dialog.pantalla[open]{display:flex;flex-direction:column}
 .tmdb-ajuste small{color:var(--ink2);font-size:12.5px}
 .tmdb-ajuste .sec{padding:8px 12px;font-size:14px}
 .bus-estado button{margin-left:6px;border:0;border-radius:10px;padding:6px 10px;font-weight:600;font-size:13px;background:var(--soft);color:var(--ink)}
+
+/* ---------- vista en cuadrícula de portadas ---------- */
+.buscar-fila{display:flex;gap:8px;margin-bottom:10px}
+.buscar-fila .buscar{margin-bottom:0;flex:1;min-width:0}
+.vista-btn{flex:none;width:46px;border:1.5px solid var(--line);background:var(--card);border-radius:12px;display:grid;place-items:center;padding:0}
+.vista-btn svg{width:20px;height:20px;fill:var(--ink2)}
+.vista-btn:active{background:var(--chip)}
+.lista.rejilla{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 10px}
+.rejilla .vacio,.rejilla .ver-mas{grid-column:1/-1}
+.casilla.item{display:flex;flex-direction:column;gap:5px;align-items:stretch;padding:0;background:none;border-radius:0;box-shadow:none;min-width:0}
+.tapa{position:relative;display:block;aspect-ratio:2/3;border-radius:10px;overflow:hidden;background:var(--card2)}
+.tapa img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.sin-tapa{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:10px;text-align:center;
+  border-top:4px solid var(--peli);background:linear-gradient(160deg,var(--card2),var(--card))}
+.tapa.serie .sin-tapa{border-color:var(--serie)} .tapa.anime .sin-tapa{border-color:var(--anime)} .tapa.libro .sin-tapa{border-color:var(--libro)}
+.sin-tapa i{font-style:normal;font-size:24px;opacity:.85}
+.sin-tapa b{font-size:13px;line-height:1.25;color:var(--ink);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.tapa .mc{position:absolute;z-index:1;font-size:11.5px;font-weight:700;line-height:1;padding:4px 6px;border-radius:7px;background:rgba(23,25,30,.82);color:var(--ink);backdrop-filter:blur(2px)}
+.tapa .mc.temp{top:6px;left:6px}
+.tapa .mcs{position:absolute;z-index:1;top:6px;right:6px;display:flex;flex-direction:column;gap:4px}
+.tapa .mcs .mc{position:static;font-size:12px;padding:3px 5px}
+.tapa .mc.abajo{left:6px;right:6px;bottom:6px;text-align:center;font-weight:600}
+.casilla .ct{font-size:13px;font-weight:600;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.casilla .cs{font-size:11.5px;color:var(--ink2);margin-top:-3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

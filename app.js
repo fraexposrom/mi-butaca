@@ -1046,6 +1046,40 @@ let filtro = 'todo';
 let anioV = 'todos', anioL = 'todos';
 /* Listas largas: se dibujan por tandas; «Ver más» añade otra tanda. Al filtrar o buscar se vuelve a la primera. */
 const TANDA = 40;
+/* ---- vista de las listas: cuadrícula de portadas (por defecto) o lista con detalles. Cada móvil recuerda la suya ---- */
+const LS_VISTA = 'mb_vista';
+let vista = leerLS(LS_VISTA, 'cuadricula') === 'lista' ? 'lista' : 'cuadricula';
+const enRejilla = () => vista === 'cuadricula';
+const claseLista = () => 'lista' + (enRejilla() ? ' rejilla' : '');
+const ICO_REJILLA = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></svg>';
+const ICO_LISTA = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="3.5" rx="1.5"/><rect x="3" y="10.25" width="18" height="3.5" rx="1.5"/><rect x="3" y="16.5" width="18" height="3.5" rx="1.5"/></svg>';
+function pintarBotonesVista() {
+  $$('[data-vista]').forEach(b => {
+    b.innerHTML = enRejilla() ? ICO_LISTA : ICO_REJILLA;
+    const txt = enRejilla() ? 'Ver como lista' : 'Ver como cuadrícula de portadas';
+    b.title = txt; b.setAttribute('aria-label', txt);
+  });
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('[data-vista]')) return;
+  vista = enRejilla() ? 'lista' : 'cuadricula'; escribirLS(LS_VISTA, vista);
+  pintarBotonesVista(); pintarVistas(); pintarLeidos(); pintarPorVer(); pintarPorLeer();
+});
+/**
+ * Casilla de la cuadrícula: portada (o, si no hay o falla, un recuadro con el icono y el título),
+ * marcas encima (temporada, 👍/⭐, ↻, estreno) y debajo el título y un dato corto.
+ */
+function casilla(i, { abajo = '', esquina = '' } = {}) {
+  const marcas = [];
+  if (etiquetaTemp(i)) marcas.push(`<span class="mc temp">${esc(etiquetaTemp(i))}</span>`);
+  const der = [i.recomienda && !esPend(i) ? '<span class="mc" title="Lo recomendaría">👍</span>' : '',
+    i.ganas && esPend(i) ? '<span class="mc" title="Muchas ganas">⭐</span>' : '',
+    i.revisionado ? `<span class="mc" title="${i.tipo === 'libro' ? 'Relectura' : 'Revisionado'}">↻</span>` : ''].join('');
+  return `<li><button class="item casilla" data-id="${esc(i.id)}" aria-label="${esc(i.titulo)}">
+    <span class="tapa ${i.tipo}"><span class="sin-tapa"><i>${ICONO_TIPO[i.tipo]}</i><b>${esc(i.titulo)}</b></span>${i.portada ? `<img src="${esc(i.portada)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
+      ${marcas.join('')}${der ? `<span class="mcs">${der}</span>` : ''}${esquina ? `<span class="mc abajo">${esc(esquina)}</span>` : ''}</span>
+    <span class="ct">${esc(i.titulo)}</span>${abajo ? `<span class="cs">${esc(abajo)}</span>` : ''}</button></li>`;
+}
 const lim = { v: TANDA, l: TANDA, pv: TANDA, pl: TANDA };
 const reinicia = (k, f) => () => { lim[k] = TANDA; f(); };
 document.addEventListener('click', e => {
@@ -1054,13 +1088,16 @@ document.addEventListener('click', e => {
   ({ v: pintarVistas, l: pintarLeidos, pv: pintarPorVer, pl: pintarPorLeer })[k]();
 });
 const botonMas = (k, resto) => resto > 0 ? `<button type="button" class="ver-mas" data-mas="${k}">Ver más · quedan ${resto}</button>` : '';
+/** Dato corto bajo la portada: autor en libros; fecha en lo demás (si es de ese año). */
+const abajoHecho = (i, anio) => ({ abajo: i.tipo === 'libro' ? i.autor || fechaCorta(i.fechaFin)
+  : i.fechaVisto && Number(i.fechaVisto.slice(0, 4)) === anio ? fechaCorta(i.fechaVisto) : NOMBRE_TIPO[i.tipo] });
 /** Agrupa por año y dibuja solo hasta «max» elementos; las cabeceras llevan los totales del año completo. */
 function porTandas(lista, max, cabecera, fila) {
   let quedan = max, h = '';
   for (const [anio, l] of porAnio(lista)) {
     if (quedan <= 0) break;
     const vis = l.slice(0, quedan); quedan -= vis.length;
-    h += cabecera(anio, l) + `<ul class="lista">${vis.map(i => fila(i, anio)).join('')}</ul>`;
+    h += cabecera(anio, l) + `<ul class="${claseLista()}">${vis.map(i => enRejilla() ? casilla(i, abajoHecho(i, anio)) : fila(i, anio)).join('')}</ul>`;
   }
   return h;
 }
@@ -1126,7 +1163,7 @@ function pintarVistas() {
     <div class="stat"><b>${ob.length}</b><span>${{ pelicula: 'películas', serie: 'series', anime: 'animes' }[filtro] || 'títulos'}${cuando}</span></div>
     <div class="stat"><b>${horas(totMin)}</b><span>vistas${cuando}</span></div>
     <div class="stat"><b>${rec}%</b><span>recomendadas</span></div>`;
-  if (!lista.length) { $('#listaVistas').innerHTML = `<ul class="lista">${vacio(todos.length, '¿Qué has visto últimamente?', 'Añádelo desde el botón central.')}</ul>`; return; }
+  if (!lista.length) { $('#listaVistas').innerHTML = `<ul class="${claseLista()}">${vacio(todos.length, '¿Qué has visto últimamente?', 'Añádelo desde el botón central.')}</ul>`; return; }
   $('#listaVistas').innerHTML = porTandas(lista, lim.v, (anio, l) => {
     const min = l.reduce((s, i) => s + minutos(i), 0);
     return `<h2 class="grupo"><span>${anio}</span><small>${plural(obras(l).length, 'título', 'títulos')}${min ? ' · ' + horas(min) : ''}</small></h2>`;
@@ -1161,7 +1198,7 @@ function pintarLeidos() {
     <div class="stat"><b>${base.length}</b><span>libros en ${anioL}</span></div>
     <div class="stat"><b>${pags.toLocaleString('es-ES')}</b><span>páginas</span></div>
     <div class="stat"><b>${conPags.length ? Math.round(pags / conPags.length).toLocaleString('es-ES') : '–'}</b><span>págs. por libro</span></div>`;
-  if (!lista.length) { $('#listaLeidos').innerHTML = `<ul class="lista">${vacio(todos.length, '¿Qué has leído últimamente?', 'Añádelo desde el botón central eligiendo «Libro».')}</ul>`; return; }
+  if (!lista.length) { $('#listaLeidos').innerHTML = `<ul class="${claseLista()}">${vacio(todos.length, '¿Qué has leído últimamente?', 'Añádelo desde el botón central eligiendo «Libro».')}</ul>`; return; }
   $('#listaLeidos').innerHTML = porTandas(lista, lim.l, (anio, l) => {
     const p = l.reduce((s, i) => s + (i.paginas || 0), 0);
     const gasto = l.reduce((s, i) => s + (i.precio || 0), 0);
@@ -1207,6 +1244,10 @@ function filtrarPorLeer() {
 const metaPend = i => i.tipo === 'libro' ? [i.autor].filter(Boolean)
   : [NOMBRE_TIPO[i.tipo], etiquetaTemp(i), i.genero, donde(i)].filter(Boolean);
 function filaPend(i) {
+  if (enRejilla()) {
+    const futuro = i.estreno && !yaEstrenado(i);
+    return casilla(i, { abajo: i.tipo === 'libro' ? i.autor || '' : NOMBRE_TIPO[i.tipo], esquina: futuro ? `📅 ${fechaCorta(i.estreno)}` : '' });
+  }
   return `<li><button class="item" data-id="${esc(i.id)}">${marcaDe(i)}<span class="cuerpo">
     <span class="t"><em>${esc(i.titulo)}</em>${i.ganas ? '<span class="ganas" title="Muchas ganas">⭐</span>' : ''}</span>
     <span class="m">${metaPend(i).map(esc).join(' · ')}</span>${i.nota ? `<span class="nota">${esc(i.nota)}</span>` : ''}</span>
@@ -1215,12 +1256,14 @@ function filaPend(i) {
 function pintarPorVer() {
   const total = pendientes().filter(i => i.tipo !== 'libro').length, l = filtrarPorVer();
   $('#elegirV').hidden = !total;
+  $('#listaPorVer').className = claseLista();
   $('#listaPorVer').innerHTML = l.length ? l.slice(0, lim.pv).map(filaPend).join('') + botonMas('pv', l.length - lim.pv)
     : vacio(total, 'Nada pendiente todavía', 'Apunta lo que quieras ver desde el botón central, eligiendo «Lo tengo pendiente».');
 }
 function pintarPorLeer() {
   const total = pendientes().filter(i => i.tipo === 'libro').length, l = filtrarPorLeer();
   $('#elegirL').hidden = !total;
+  $('#listaPorLeer').className = claseLista();
   $('#listaPorLeer').innerHTML = l.length ? l.slice(0, lim.pl).map(filaPend).join('') + botonMas('pl', l.length - lim.pl)
     : vacio(total, 'Nada pendiente todavía', 'Apunta lo que quieras leer desde el botón central, eligiendo «Libro» y «Lo tengo pendiente».');
 }
@@ -1441,6 +1484,7 @@ function vacio(hayAlgo, titulo, texto) {
     : `<li class="vacio"><b>${titulo}</b>${texto}</li>`;
 }
 function pintarTodo() {
+  pintarBotonesVista();
   pintarVistas(); pintarLeidos(); pintarPorVer(); pintarPorLeer(); pintarSegmentos();
   if ($('#resumen').open) pintarResumen();
   if ($('#calendario').open) pintarCalendario();
