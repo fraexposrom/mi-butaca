@@ -1503,6 +1503,7 @@ $('#btnSync').addEventListener('click', () => {
   fa.token.value = cfg?.token || ''; fa.nombre.value = cfg?.nombre || ''; fa.caduca.value = cfg?.caduca || '';
   $('#avisoExport').checked = !!leerLS(LS_AVISO_EXPORT, false);
   pintarClaveTMDB();
+  pintarTelegram(); $('#tgRes').hidden = true;
   const nSin = sinPortada().length;
   $('#btnCompletar').textContent = nSin ? `🖼️ Buscar portadas que faltan (${nSin})` : '🖼️ Portadas: todo completo';
   $('#btnCompletar').disabled = !nSin;
@@ -1722,6 +1723,64 @@ $('#btnExportar').addEventListener('click', () => {
 
 /* ---------------- varios ---------------- */
 let tToast;
+/* ---------------- avisos por Telegram ----------------
+ * Los envía una tarea de GitHub Actions del repositorio de datos (.github/workflows/avisos-telegram.yml), no la app:
+ * así llegan aunque la app esté cerrada. Este botón solo le pide a GitHub que lance esa tarea en modo «prueba»
+ * y sigue cómo acaba. El token necesita además el permiso «Actions: Read and write».
+ */
+const FLUJO_TG = 'avisos-telegram.yml', LS_TG = 'mb_tg_prueba';
+function pintarTelegram() {
+  const u = leerLS(LS_TG, null);
+  $('#tgEstado').textContent = u?.ok ? `Funcionan · última prueba el ${fechaCorta(u.fecha)}` : 'Los días de estreno y cada lunes con lo de la semana';
+}
+function resultadoTG(html, tipo = '') {
+  const el = $('#tgRes'); el.hidden = false; el.className = `estado tg-res ${tipo}`; el.innerHTML = html;
+}
+const esperar = ms => new Promise(r => setTimeout(r, ms));
+async function probarTelegram() {
+  if (!cfg) { resultadoTG('Conecta primero con GitHub.', 'mal'); return; }
+  const btn = $('#btnProbarTG'); btn.disabled = true; btn.textContent = 'Enviando…';
+  try {
+    resultadoTG('Pidiendo a GitHub que envíe el aviso de prueba…');
+    const repo = await gh('');
+    if (!repo.ok) throw new Error(repo.status === 401 ? 'El token de GitHub no es válido o ha caducado.' : 'No se pudo acceder a tu repositorio de datos.');
+    const rama = (await repo.json()).default_branch || 'main';
+    const inicio = Date.now();
+    const r = await gh(`/actions/workflows/${FLUJO_TG}/dispatches`, { method: 'POST', body: JSON.stringify({ ref: rama, inputs: { modo: 'prueba' } }) });
+    if (r.status === 403) throw new Error('Tu token no tiene permiso para lanzar la tarea. En GitHub, edita el token y en «Repository permissions» pon <b>Actions</b> en <b>Read and write</b>.');
+    if (r.status === 404) throw new Error(`No encuentro la tarea de avisos. Comprueba que existe <code>.github/workflows/${FLUJO_TG}</code> en tu repositorio de datos (o que el token tiene el permiso <b>Actions</b>).`);
+    if (r.status === 422) throw new Error('GitHub no deja lanzar la tarea. Revisa que el archivo de la tarea es el correcto y está en la rama principal.');
+    if (!r.ok) throw new Error(`GitHub respondió ${r.status}.`);
+    let idRun = null;
+    if (r.status === 200) try { idRun = (await r.json()).workflow_run_id || null; } catch { /* respuesta sin cuerpo */ }
+    // seguir la ejecución (hasta 2 minutos)
+    let run = null;
+    for (let n = 0; n < 40; n++) {
+      await esperar(n ? 3000 : 1500);
+      if (idRun) { const x = await gh(`/actions/runs/${idRun}`); if (x.ok) run = await x.json(); }
+      else {
+        const x = await gh(`/actions/workflows/${FLUJO_TG}/runs?event=workflow_dispatch&per_page=5`);
+        if (x.ok) run = ((await x.json()).workflow_runs || []).find(w => Date.parse(w.created_at) >= inicio - 15000) || null;
+        if (run) idRun = run.id;
+      }
+      if (!run) continue;
+      if (run.status !== 'completed') { resultadoTG(run.status === 'queued' || run.status === 'waiting' || run.status === 'pending' ? 'En cola en GitHub…' : 'Enviando el aviso…'); continue; }
+      const enlace = run.html_url ? ` <a href="${esc(run.html_url)}" target="_blank" rel="noopener">Ver detalles</a>` : '';
+      if (run.conclusion === 'success') {
+        escribirLS(LS_TG, { ok: true, fecha: hoyISO() }); pintarTelegram();
+        resultadoTG('✅ Aviso enviado. Míralo en Telegram.', 'bien'); return;
+      }
+      escribirLS(LS_TG, { ok: false, fecha: hoyISO() }); pintarTelegram();
+      resultadoTG(`❌ La tarea falló. Lo más habitual: los secretos <b>TELEGRAM_TOKEN</b> o <b>TELEGRAM_CHAT_ID</b> están mal copiados, o no has escrito <b>/start</b> a tu bot.${enlace}`, 'mal');
+      return;
+    }
+    resultadoTG('GitHub está tardando más de lo normal. El aviso llegará en cuanto se ejecute la tarea.');
+  } catch (e) {
+    resultadoTG(e.message && !/fetch/i.test(e.message) ? e.message : 'Sin conexión. Inténtalo de nuevo.', 'mal');
+  } finally { btn.disabled = false; btn.textContent = 'Probar aviso'; }
+}
+$('#btnProbarTG').addEventListener('click', probarTelegram);
+
 function avisar(t) { const el = $('#toast'); el.textContent = t; el.classList.add('ver'); clearTimeout(tToast); tToast = setTimeout(() => el.classList.remove('ver'), 2200); }
 addEventListener('online', () => sincronizar());
 addEventListener('offline', () => pintarEstado());
