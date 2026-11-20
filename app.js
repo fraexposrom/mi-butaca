@@ -1731,7 +1731,7 @@ let tToast;
 const FLUJO_TG = 'avisos-telegram.yml', LS_TG = 'mb_tg_prueba';
 function pintarTelegram() {
   const u = leerLS(LS_TG, null);
-  $('#tgEstado').textContent = u?.ok ? `Funcionan · última prueba el ${fechaCorta(u.fecha)}` : 'Los días de estreno y cada lunes con lo de la semana';
+  $('#tgEstado').textContent = u?.ok ? `Funcionan · última prueba el ${fechaCorta(u.fecha)}` : 'Te escribe cada lunes con los estrenos de la semana';
 }
 function resultadoTG(html, tipo = '') {
   const el = $('#tgRes'); el.hidden = false; el.className = `estado tg-res ${tipo}`; el.innerHTML = html;
